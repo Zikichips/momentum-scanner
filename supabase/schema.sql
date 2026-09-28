@@ -122,8 +122,15 @@ alter table scoreboard_daily add column if not exists breakout_win_rate double p
 alter table scoreboard_daily add column if not exists breakout_avg_r double precision;
 
 -- Migration: setups not taken because max_concurrent_trades positions were open.
+-- (First version used outcome = 'skipped_concurrent'; kept in the check for old rows.)
 alter table alerts drop constraint if exists alerts_outcome_check;
 alter table alerts add constraint alerts_outcome_check check (outcome in ('open','stop','t1','t2','expired','skipped_concurrent'));
+-- skipped_concurrent is no longer written: skipped setups are graded like the rest and
+-- marked taken = false instead, so the scoreboard can show tool vs trader.
+alter table alerts add column if not exists taken boolean not null default true;
+alter table scoreboard_daily add column if not exists trader_n_graded int;
+alter table scoreboard_daily add column if not exists trader_win_rate double precision;
+alter table scoreboard_daily add column if not exists trader_avg_r double precision;
 
 -- Row-level security: dashboard uses the anon key and may only read.
 alter table in_play enable row level security;

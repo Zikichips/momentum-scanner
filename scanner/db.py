@@ -79,5 +79,7 @@ class Store:
         return self.select("in_play", status="watching")
 
     def open_alerts(self) -> list[dict]:
+        """Open positions: alerts actually taken and not yet resolved (skipped ones are
+        graded but never count toward the concurrency limit or get exit notices)."""
         rows = self.select("alerts")
-        return [r for r in rows if r.get("outcome") in (None, "open")]
+        return [r for r in rows if r.get("outcome") in (None, "open") and r.get("taken") is not False]

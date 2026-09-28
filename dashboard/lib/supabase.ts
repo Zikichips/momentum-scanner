@@ -10,6 +10,7 @@ export type Alert = {
   entry: number; stop: number; target1: number; target2: number; reward_risk: number;
   position_usd: number; retrace_pct: number; notes: string | null;
   entry_type: "pullback" | "breakout" | null;
+  taken: boolean | null;
   outcome: "open" | "stop" | "t1" | "t2" | "expired" | "skipped_concurrent" | null; outcome_at: string | null;
   mfe_7d: number | null; mae_7d: number | null; hold_7d_return: number | null;
   rule_return: number | null; r_multiple: number | null;
@@ -19,6 +20,7 @@ export type Scoreboard = {
   win_rate: number | null; avg_r: number | null; expectancy_r: number | null; vs_hold_7d: number | null;
   pullback_n_graded: number | null; pullback_win_rate: number | null; pullback_avg_r: number | null;
   breakout_n_graded: number | null; breakout_win_rate: number | null; breakout_avg_r: number | null;
+  trader_n_graded: number | null; trader_win_rate: number | null; trader_avg_r: number | null;
 };
 export type Journal = {
   id: string; alert_id: string | null; symbol: string; opened_at: string; closed_at: string | null;

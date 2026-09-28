@@ -13,7 +13,6 @@ from .config import CFG
 from . import data
 from .strategy import detect_breakout, detect_pullback, breakout_entry, entries_enabled, update_impulse_high, Breakout
 from .db import Store
-from .outcomes import SKIPPED
 from . import alerts as notify
 
 
@@ -37,12 +36,12 @@ def universe() -> list[tuple[str, str]]:
 
 
 def _insert_alert(store: Store, setup, in_play_id) -> bool:
-    """Store a new alert. At account.max_concurrent_trades open alerts it is stored as
-    skipped_concurrent instead (not traded, not graded). Returns True if taken."""
+    """Store a new alert. At account.max_concurrent_trades open (taken) alerts it is stored
+    with taken=False: graded like any alert, but not traded. Returns True if taken."""
     limit = CFG["account"].get("max_concurrent_trades")
     taken = limit is None or len(store.open_alerts()) < limit
     row = setup.to_row(); row.pop("pullback_low")
-    row.update({"in_play_id": in_play_id, "outcome": "open" if taken else SKIPPED,
+    row.update({"in_play_id": in_play_id, "outcome": "open", "taken": taken,
                 "fired_at": datetime.now(timezone.utc)})
     store.insert("alerts", row)
     return taken

@@ -25,7 +25,7 @@ def build() -> str:
     lines += ["", "*In play (watching for pullback)*"]
     lines += [f"• {w['symbol']} broke {w['breakout_level']:.4g} on {w['breakout_date']}" for w in watching] or ["• none"]
     lines += ["", "*Scoreboard*"]
-    for label in ("overall", "pullback", "breakout"):
+    for label in ("overall", "pullback", "breakout", "trader"):
         st = sb[label]
         if st["alerts_graded"]:
             vs = f"{st['vs_hold_7d']:+.1f}pp" if st["vs_hold_7d"] is not None else "–"

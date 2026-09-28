@@ -89,13 +89,15 @@ def grade(alert: dict, df: pd.DataFrame, max_days: int = 14, close_at_end: bool 
 
 
 ENTRY_TYPES = ("pullback", "breakout")
-# Setups not taken because account.max_concurrent_trades positions were already open.
-# Never graded, never counted in the stats (but counted as skipped).
-SKIPPED = "skipped_concurrent"
+# Setups not taken because account.max_concurrent_trades positions were already open are
+# stored with taken=False. They are graded like every other alert (the tool is judged on
+# all of them) but left out of the trader stats.
+def is_taken(a: dict) -> bool:
+    return a.get("taken") is not False
 
 
 def _stats(alerts: list[dict]) -> dict:
-    graded = [a for a in alerts if a.get("outcome") not in (None, "open", SKIPPED)]
+    graded = [a for a in alerts if a.get("outcome") not in (None, "open")]
     wins = [a for a in graded if (a.get("r_multiple") or 0) > 0]
     losses = [a for a in graded if (a.get("r_multiple") or 0) <= 0]
     rs = [a["r_multiple"] for a in graded if a.get("r_multiple") is not None]
@@ -106,7 +108,7 @@ def _stats(alerts: list[dict]) -> dict:
     return {
         "alerts_total": len(alerts),
         "alerts_graded": len(graded),
-        "skipped": sum(a.get("outcome") == SKIPPED for a in alerts),
+        "skipped": sum(not is_taken(a) for a in alerts),
         "wins": len(wins),
         "losses": len(losses),
         "win_rate": round(len(wins) / len(graded), 3) if graded else None,
@@ -119,11 +121,14 @@ def _stats(alerts: list[dict]) -> dict:
 
 
 def scoreboard(alerts: list[dict]) -> dict:
-    """{day, overall: {...}, pullback: {...}, breakout: {...}}. Alerts from before
-    entry types existed have no entry_type and count as pullback."""
+    """{day, overall, pullback, breakout, trader}.
+    overall / pullback / breakout judge the TOOL: every alert, including ones skipped at the
+    concurrency limit. trader covers only the alerts actually taken. Alerts from before entry
+    types existed count as pullback."""
     out = {"day": datetime.now(timezone.utc).date().isoformat(), "overall": _stats(alerts)}
     for t in ENTRY_TYPES:
         out[t] = _stats([a for a in alerts if (a.get("entry_type") or "pullback") == t])
+    out["trader"] = _stats([a for a in alerts if is_taken(a)])
     return out
 
 
@@ -136,6 +141,9 @@ def scoreboard_row(sb: dict) -> dict:
         row[f"{t}_n_graded"] = sb[t]["alerts_graded"]
         row[f"{t}_win_rate"] = sb[t]["win_rate"]
         row[f"{t}_avg_r"] = sb[t]["avg_r"]
+    row["trader_n_graded"] = sb["trader"]["alerts_graded"]
+    row["trader_win_rate"] = sb["trader"]["win_rate"]
+    row["trader_avg_r"] = sb["trader"]["avg_r"]
     return row
 
 
@@ -148,8 +156,6 @@ def main():
         fired = pd.Timestamp(a["fired_at"])
         if fired.tzinfo is None:
             fired = fired.tz_localize("UTC")
-        if a.get("outcome") == SKIPPED:
-            continue
         if a.get("outcome") not in (None, "open") and datetime.now(timezone.utc) - fired > timedelta(days=15):
             continue
         try:

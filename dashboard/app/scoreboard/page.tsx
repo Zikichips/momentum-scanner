@@ -5,7 +5,7 @@ export const revalidate = 300;
 export default async function ScoreboardPage() {
   const [{ data: sb }, { data: al }] = await Promise.all([
     supabase.from("scoreboard_daily").select("*").order("day", { ascending: false }).limit(60),
-    supabase.from("alerts").select("outcome,r_multiple,rule_return,hold_7d_return,symbol,entry_type").not("outcome", "is", null).not("outcome", "in", "(open,skipped_concurrent)"),
+    supabase.from("alerts").select("outcome,r_multiple,rule_return,hold_7d_return,symbol,entry_type,taken").not("outcome", "is", null).not("outcome", "in", "(open,skipped_concurrent)"),
   ]);
   const rows = (sb ?? []) as Scoreboard[];
   const latest = rows[0];
@@ -18,18 +18,21 @@ export default async function ScoreboardPage() {
   const pct = (v: number | null | undefined) => v == null ? "–" : `${(v * 100).toFixed(0)}%`;
   const avg = (xs: number[]) => xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : null;
   // Same definitions as outcomes.scoreboard(); alerts from before entry types count as pullback.
-  const byType = (["pullback", "breakout"] as const).map(t => {
-    const g = graded.filter(a => (a.entry_type ?? "pullback") === t);
+  const stats = (label: string, g: Alert[]) => {
     const rs = g.flatMap(a => a.r_multiple == null ? [] : [a.r_multiple]);
     const rules = avg(g.flatMap(a => a.rule_return == null ? [] : [a.rule_return]));
     const holds = avg(g.flatMap(a => a.hold_7d_return == null ? [] : [a.hold_7d_return]));
     return {
-      t, n: g.length,
+      t: label, n: g.length,
       winRate: g.length ? g.filter(a => (a.r_multiple ?? 0) > 0).length / g.length : null,
       avgR: avg(rs),
       vsHold: rules != null && holds != null ? rules - holds : null,
     };
-  });
+  };
+  const byType = (["pullback", "breakout"] as const).map(t => stats(t, graded.filter(a => (a.entry_type ?? "pullback") === t)));
+  // Tool = every alert the scanner fired (including ones skipped at max positions);
+  // trader = only the alerts actually taken.
+  const toolVsTrader = [stats("tool (every alert)", graded), stats("trader (taken only)", graded.filter(a => a.taken !== false))];
 
   return (
     <>
@@ -48,6 +51,22 @@ export default async function ScoreboardPage() {
           <thead><tr><th>Entry</th><th>n</th><th>Win rate</th><th>Avg R</th><th>Expectancy (R/trade)</th><th>vs hold 7d</th></tr></thead>
           <tbody>
             {byType.map(r => (
+              <tr key={r.t}>
+                <td><strong>{r.t}</strong></td><td>{r.n}</td><td>{pct(r.winRate)}</td>
+                <td className={r.avgR == null ? "muted" : r.avgR > 0 ? "up" : "down"}>{r.avgR?.toFixed(2) ?? "–"}</td>
+                <td className={r.avgR == null ? "muted" : r.avgR > 0 ? "up" : "down"}>{r.avgR?.toFixed(2) ?? "–"}</td>
+                <td className={r.vsHold == null ? "muted" : r.vsHold > 0 ? "up" : "down"}>{r.vsHold == null ? "–" : `${r.vsHold > 0 ? "+" : ""}${r.vsHold.toFixed(1)}pp`}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <h2 style={{ fontSize: 16 }}>Tool vs trader</h2>
+      <div className="wrap">
+        <table>
+          <thead><tr><th></th><th>n</th><th>Win rate</th><th>Avg R</th><th>Expectancy (R/trade)</th><th>vs hold 7d</th></tr></thead>
+          <tbody>
+            {toolVsTrader.map(r => (
               <tr key={r.t}>
                 <td><strong>{r.t}</strong></td><td>{r.n}</td><td>{pct(r.winRate)}</td>
                 <td className={r.avgR == null ? "muted" : r.avgR > 0 ? "up" : "down"}>{r.avgR?.toFixed(2) ?? "–"}</td>

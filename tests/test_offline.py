@@ -74,7 +74,7 @@ assert row["pullback_n_graded"] == 1 and row["breakout_n_graded"] == 1
 print("Outcomes OK ->", sb)
 
 # Concurrency limit, live: with the limit at the number of open alerts, a new setup is
-# stored as skipped_concurrent and not counted as graded.
+# stored with taken=False. Once graded it counts for the tool, not the trader.
 from scanner.strategy import Setup
 CFG["account"]["max_concurrent_trades"] = len(store.open_alerts())
 extra = Setup(symbol="TEST/USD", asset_class="crypto", entry=10.0, stop=9.0, target1=12.0, target2=14.0,
@@ -82,9 +82,16 @@ extra = Setup(symbol="TEST/USD", asset_class="crypto", entry=10.0, stop=9.0, tar
               entry_type="breakout")
 assert scan._insert_alert(store, extra, None) is False
 skipped = [x for x in store.select("alerts") if x["symbol"] == "TEST/USD"]
-assert len(skipped) == 1 and skipped[0]["outcome"] == "skipped_concurrent"
+assert len(skipped) == 1 and skipped[0]["taken"] is False and skipped[0]["outcome"] == "open"
+assert all(x["symbol"] != "TEST/USD" for x in store.open_alerts())   # not a position
+x = skipped[0]
+x["fired_at"] = BO_CUT.isoformat()
+store.update("alerts", x["id"], outcomes.grade({**x, "entry": ba["entry"], "stop": ba["stop"],
+                                                "target1": ba["target1"], "target2": ba["target2"]}, hist, close_at_end=True))
 sb2 = outcomes.scoreboard(store.select("alerts"))
-assert sb2["overall"]["alerts_graded"] == 2 and sb2["overall"]["skipped"] == 1
+assert sb2["overall"]["alerts_graded"] == 3 and sb2["overall"]["skipped"] == 1
+assert sb2["trader"]["alerts_graded"] == 2 and sb2["trader"]["skipped"] == 0
+assert outcomes.scoreboard_row(sb2)["trader_n_graded"] == 2
 
 # Concurrency limit, backtest: three overlapping trades with a limit of 2 -> third skipped.
 from scanner.backtest import apply_portfolio
@@ -92,7 +99,7 @@ t0 = pd.Timestamp("2026-01-01", tz="UTC")
 fake = [{"entry": 10.0, "stop": 9.0, "rule_return": 10.0, "r_multiple": 1.0, "outcome": "t2",
          "fired_at": t0 + pd.Timedelta(hours=h), "outcome_at": (t0 + pd.Timedelta(days=3)).isoformat()} for h in (0, 1, 2)]
 rows, st = apply_portfolio(fake, 1000, 2, 50, 0.3)
-assert st["taken"] == 2 and st["skipped"] == 1 and rows[2]["outcome"] == "skipped_concurrent"
+assert st["taken"] == 2 and st["skipped"] == 1 and rows[2]["taken"] is False and rows[2]["outcome"] == "t2"
 _, st = apply_portfolio(fake, 1000, None, 50, 0.3)
 assert st["taken"] == 3 and st["skipped"] == 0
 print("Concurrency OK ->", st)

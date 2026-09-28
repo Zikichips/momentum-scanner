@@ -56,3 +56,19 @@ Why it's negative when the top-30 run was positive: the 41 trades on the earlier
 For reference, earlier top-30 coins only, $1,000/50% cap: max 2 concurrent → 19 taken, +$431, DD $275; unlimited → 41 taken, +$572, DD $340 (that subset is picked with hindsight — today's volume ranking).
 
 Verdict: no concurrency/cap setting makes the breakout entry profitable on the full live universe. Least-bad: max_concurrent 2, cap 50% (config default). The cap barely matters (same trades; 75% only enlarges size and drawdown).
+
+## 2026-09-28 — rolling universe (no hindsight) vs fixed top-30 vs full 109
+
+Command: `python -m scanner.backtest --entry breakout --rolling-top 30 --days 365 --capital 1000 --max-concurrent 2 --max-position 50` (`backtest_20260928_125403.csv`).
+Rolling universe: each calendar month, top 30 Kraken USD pairs by the previous month's Kraken quote volume (close × volume), among the 289 Kraken USD pairs Coinbase also lists; Stage A only checked while a coin is in that month's list. 63 distinct pairs over 13 months. Only pairs listed on Kraken today could be ranked (survivorship). Thresholds unchanged. All three rows use the same replay: $1,000, max 2 concurrent, 50% cap, fees 0.3% each way. "Tool" = every setup; "trader" = setups actually taken.
+
+| universe | setups | tool avg R | taken | trader avg R | P&L | max DD | P&L ÷ DD | H2-2025 setups / avg R / taken $ | H1-2026 | H2-2026 (Jul–Sep) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| fixed top-30 (hindsight) | 41 | +0.54 | 19 | +0.55 | +$431 | $275 | 1.57 | 7 / +0.27 / −$31 | 10 / −0.06 / +$35 | 24 / +0.87 / +$427 |
+| full 109 (live universe today) | 168 | −0.09 | 59 | −0.02 | −$221 | $1,141 | −0.19 | 27 / +0.34 / +$399 | 61 / −0.64 / −$929 | 80 / +0.18 / +$309 |
+| rolling top-30 (no hindsight) | 32 | +0.34 | 15 | +1.00 | +$430 | $161 | 2.68 | 3 / +3.35 / +$220 | 8 / −0.09 / −$14 | 21 / +0.07 / +$224 |
+
+Concentration (rolling): DASH/USD 1 Nov 2025 = +12.1R, +$329 of the $430. Without it: tool avg R −0.04, median setup −0.28R, P&L +$101. Trader avg R (+1.00) beats tool (+0.34) only because the concurrency limit happened to keep DASH and skip losers — order luck, not skill.
+Note: the rolling list includes PAXG (gold token) and USD1 (stablecoin), which aren't in `universe.crypto.exclude`; they never fired.
+
+Verdict: liquid-only is clearly less bad than the full universe (smaller losses, much smaller drawdown), but without hindsight the positive result rests on one trade. No demonstrated edge.

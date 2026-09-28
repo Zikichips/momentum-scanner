@@ -14,7 +14,7 @@ import pandas as pd
 from .config import CFG, ROOT
 from . import data
 from .strategy import detect_breakout, detect_pullback, breakout_entry, entries_enabled, update_impulse_high
-from .outcomes import grade, scoreboard, SKIPPED
+from .outcomes import grade, scoreboard
 from .strategy import position_size
 
 
@@ -23,9 +23,12 @@ def resample_daily(intraday: pd.DataFrame) -> pd.DataFrame:
 
 
 def run_symbol(symbol: str, asset_class: str, intraday: pd.DataFrame,
-               entries: list[str] | None = None, start: pd.Timestamp | None = None) -> list[dict]:
+               entries: list[str] | None = None, start: pd.Timestamp | None = None,
+               active=None) -> list[dict]:
     """entries: which entry types to trade (default: config). start: only breakouts on or
-    after this day count; earlier bars are warm-up for the indicators."""
+    after this day count; earlier bars are warm-up for the indicators. active(day) -> bool:
+    whether the symbol is in the scanned universe that day (rolling universe); Stage A is
+    only checked on active days, as the live scanner only scans its universe."""
     entries = entries or entries_enabled()
     daily = resample_daily(intraday)
     b = CFG["breakout"]
@@ -38,6 +41,8 @@ def run_symbol(symbol: str, asset_class: str, intraday: pd.DataFrame,
         # Stage A on daily bars up to and including this day
         if in_play is None:
             if start is not None and day_end < start.normalize():
+                continue
+            if active is not None and not active(day_end):
                 continue
             bo = detect_breakout(daily.iloc[: i + 1], symbol, asset_class)
             if bo:
@@ -75,10 +80,33 @@ def run_symbol(symbol: str, asset_class: str, intraday: pd.DataFrame,
     return results
 
 
+def rolling_universe(top: int, months: list, hist_markets) -> dict:
+    """{month: [symbols]}: for each calendar month, the top-N Kraken USD pairs by the PREVIOUS
+    month's quote volume (sum of close x volume on Kraken daily bars), among pairs the history
+    exchange also lists. Only pairs listed on Kraken today can be ranked (survivorship)."""
+    import time
+    ex = data._exchange()
+    u = CFG["universe"]["crypto"]
+    excl = set(u["exclude"])
+    syms = [s for s, m in ex.markets.items()
+            if m.get("spot") and m.get("quote") == u["quote"] and m.get("base") not in excl and s in hist_markets]
+    print(f"ranking {len(syms)} Kraken {u['quote']} pairs (also on history exchange) by monthly volume...")
+    vols = {}
+    for s in syms:
+        try:
+            d = data.crypto_ohlcv(s, "1d", limit=720, ex=ex)
+            vols[s] = (d["close"] * d["volume"]).groupby(d.index.tz_localize(None).to_period("M")).sum()
+        except Exception as e:
+            print(f"  {s}: {e}")
+        time.sleep(0.05)
+    vol = pd.DataFrame(vols).fillna(0.0)
+    return {m: list(vol.loc[m - 1].nlargest(top).index) for m in months if (m - 1) in vol.index}
+
+
 def apply_portfolio(results: list[dict], capital: float, max_concurrent: int | None,
                     max_position_pct: float, fees_pct: float) -> tuple[list[dict], dict]:
     """Replay graded setups in time order as one account. A setup is skipped
-    (outcome skipped_concurrent) when max_concurrent trades are open, open meaning
+    (taken=False, grade kept) when max_concurrent trades are open, open meaning
     fired_at <= t < outcome_at. Taken trades are sized with position_size() and charged
     fees_pct on entry and on exit notional. Drawdown is on realised P&L (closed trades)."""
     ts = lambda v: pd.Timestamp(v).tz_convert("UTC") if pd.Timestamp(v).tzinfo else pd.Timestamp(v).tz_localize("UTC")
@@ -88,12 +116,12 @@ def apply_portfolio(results: list[dict], capital: float, max_concurrent: int | N
         t = ts(r["fired_at"])
         live = [x for x in taken if x["_open"] <= t < x["_close"]]
         if max_concurrent is not None and len(live) >= max_concurrent:
-            r["outcome"] = SKIPPED
+            r["taken"] = False
             r["position_usd"] = r["pnl_usd"] = None
             continue
         size = position_size(r["entry"], r["stop"], capital, max_position_pct)
         fees = size * fees_pct / 100 * (1 + (1 + r["rule_return"] / 100))
-        r.update(position_usd=size, pnl_usd=round(size * r["rule_return"] / 100 - fees, 2),
+        r.update(taken=True, position_usd=size, pnl_usd=round(size * r["rule_return"] / 100 - fees, 2),
                  _open=t, _close=ts(r["outcome_at"]))
         peak_deployed = max(peak_deployed, size + sum(x["position_usd"] for x in live))
         taken.append(r)
@@ -134,6 +162,8 @@ def main():
     ap.add_argument("--csv", help="offline: single-symbol intraday CSV")
     ap.add_argument("--entry", choices=["pullback", "breakout"], help="run only this entry type")
     ap.add_argument("--top", type=int, default=30, help="Kraken top-N pairs by volume when no --symbols (live scans 150)")
+    ap.add_argument("--rolling-top", type=int,
+                    help="no hindsight: each month, top-N Kraken pairs by the previous month's volume")
     ap.add_argument("--capital", type=float, help="override account.capital_usd")
     ap.add_argument("--max-position", type=float, help="override account.max_position_pct")
     ap.add_argument("--max-concurrent", type=int, help="override account.max_concurrent_trades (0 = no limit)")
@@ -155,18 +185,31 @@ def main():
         df = data.load_csv(args.csv)
         all_results += run_symbol(args.csv.split("/")[-1].replace(".csv", ""), args.asset_class, df, entries)
     else:
-        syms = args.symbols or (data.crypto_universe()[:args.top] if args.asset_class == "crypto" else data.stock_universe())
         hist_ex = None
         if args.asset_class == "crypto":
             import ccxt
             hist_ex = getattr(ccxt, CFG["backtest"]["history_exchange"])({"enableRateLimit": True})
             hist_ex.load_markets()
+        members = None
+        if args.rolling_top:
+            now = pd.Timestamp.now(tz="UTC").tz_localize(None)
+            months = list(pd.period_range(start.tz_localize(None).to_period("M"), now.to_period("M"), freq="M"))
+            members = rolling_universe(args.rolling_top, months, hist_ex.markets)
+            syms = sorted({s for v in members.values() for s in v})
+            for m, v in members.items():
+                print(f"  {m}: {', '.join(x.split('/')[0] for x in v)}")
+            print(f"rolling universe: {len(members)} months, {len(syms)} distinct pairs")
+        else:
+            syms = args.symbols or (data.crypto_universe()[:args.top] if args.asset_class == "crypto" else data.stock_universe())
         for s in syms:
             try:
                 if hist_ex is not None and s not in hist_ex.markets:
                     print(f"{s}: not listed on {hist_ex.id}, skipped"); continue
                 df = data.crypto_history(s, "1h", args.days + warm_days, hist_ex)
-                r = run_symbol(s, args.asset_class, df, entries, start)
+                active = None
+                if members is not None:
+                    active = lambda day, s=s: s in members.get(day.tz_localize(None).to_period("M"), ())
+                r = run_symbol(s, args.asset_class, df, entries, start, active)
                 print(f"{s}: {len(r)} setups " + " ".join(f"{t}={sum(x['entry_type'] == t for x in r)}" for t in entries))
                 all_results += r
             except Exception as e:
@@ -183,7 +226,8 @@ def main():
     sb = scoreboard(all_results)
     for t in entries:
         _print_summary(t, sb[t])
-    _print_summary("combined", sb["overall"])
+    _print_summary("combined (tool: every setup)", sb["overall"])
+    _print_summary("trader (taken only)", sb["trader"])
     print(f"\n[account] capital ${capital:,.0f}, max_concurrent {max_concurrent or 'none'}, "
           f"max_position {max_position:g}%, fees {fees}%/side -> {pf}")
     path = ROOT / "data" / f"backtest_{datetime.now():%Y%m%d_%H%M%S}.csv"
