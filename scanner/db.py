@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from .config import env, ROOT
 
-_LOCAL = ROOT / "data" / "local_store.json"
+# LOCAL_STORE_PATH lets tests use their own file instead of the real local store.
+_LOCAL = Path(env("LOCAL_STORE_PATH") or ROOT / "data" / "local_store.json")
 
 
 def _now() -> str:

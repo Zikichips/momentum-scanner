@@ -40,12 +40,39 @@ def crypto_universe(ex=None) -> list[str]:
     return [s for s, _ in rows[:n]]
 
 
+def closed_bars(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
+    """Drop the still-forming last bar. Exchanges return it, but the strategy must only
+    see completed bars (an hour-old daily bar has a fraction of a day's volume)."""
+    if df.empty:
+        return df
+    now = pd.Timestamp.now(tz="UTC")
+    return df[df.index + pd.to_timedelta(timeframe) <= now]
+
+
 def crypto_ohlcv(symbol: str, timeframe: str, limit: int = 400, ex=None) -> pd.DataFrame:
     ex = ex or _exchange()
     raw = ex.fetch_ohlcv(symbol, timeframe=timeframe, limit=limit)
     df = pd.DataFrame(raw, columns=["ts", *COLS])
     df["ts"] = pd.to_datetime(df["ts"], unit="ms", utc=True)
-    return df.set_index("ts")
+    return closed_bars(df.set_index("ts"), timeframe)
+
+
+def crypto_history(symbol: str, timeframe: str, days: int, ex=None) -> pd.DataFrame:
+    """Paged history for backtests. Kraken's OHLC endpoint only returns the latest 720
+    bars whatever `since` says, so this uses backtest.history_exchange (Coinbase by default)."""
+    import ccxt
+    ex = ex or getattr(ccxt, CFG["backtest"]["history_exchange"])({"enableRateLimit": True})
+    step = int(pd.to_timedelta(timeframe).total_seconds() * 1000)
+    now = int(pd.Timestamp.now(tz="UTC").timestamp() * 1000)
+    since, frames = now - days * 86_400_000, []
+    while since < now:
+        raw = ex.fetch_ohlcv(symbol, timeframe=timeframe, since=since, limit=300)
+        # Empty page = symbol not listed yet at `since`; skip ahead rather than stop.
+        since = raw[-1][0] + step if raw else since + 300 * step
+        frames += raw
+    df = pd.DataFrame(frames, columns=["ts", *COLS])
+    df["ts"] = pd.to_datetime(df["ts"], unit="ms", utc=True)
+    return closed_bars(df.drop_duplicates("ts").set_index("ts").sort_index(), timeframe)
 
 
 # ---------------------------------------------------------------- stocks
@@ -66,7 +93,7 @@ def stock_ohlcv(symbol: str, timeframe: str, limit: int = 400) -> pd.DataFrame:
         df.columns = df.columns.get_level_values(0)
     df = df.rename(columns=str.lower)[COLS]
     df.index = pd.to_datetime(df.index, utc=True)
-    return df.tail(limit)
+    return closed_bars(df, timeframe).tail(limit)
 
 
 # ---------------------------------------------------------------- unified

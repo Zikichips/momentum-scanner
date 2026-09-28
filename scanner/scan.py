@@ -39,8 +39,11 @@ def universe() -> list[tuple[str, str]]:
 def stage_a(store: Store) -> int:
     found = 0
     already = {(r["symbol"], str(r["breakout_date"])[:10]) for r in store.select("in_play")}
+    watching = {r["symbol"] for r in store.watching()}
     ex = data._exchange() if CFG["universe"]["crypto"]["enabled"] else None
     for sym, cls in universe():
+        if sym in watching:   # same as the backtester: no new Stage A while already in play
+            continue
         try:
             daily = data.ohlcv(sym, cls, CFG["timeframes"]["daily"], limit=120, ex=ex)
             bo = detect_breakout(daily, sym, cls)

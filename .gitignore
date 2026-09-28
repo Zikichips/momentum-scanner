@@ -10,3 +10,4 @@ dashboard/.vercel
 .DS_Store
 .venv/
 HANDOFF.private.md
+data/test_store.json

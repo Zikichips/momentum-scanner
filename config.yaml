@@ -48,6 +48,11 @@ targets:
   t2_extension: 0.5          # impulse_high + this x impulse_range
   stop_buffer_pct: 1.0       # stop sits this % below pullback low
 
+# Backtest history source. Kraken's OHLC endpoint only serves the latest 720 bars
+# (30 days of 1h), so a year of hourly history comes from here. Public, no key.
+backtest:
+  history_exchange: coinbase
+
 # Footprint screener (module 2)
 footprints:
   volume_multiple: 3.0

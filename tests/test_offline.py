@@ -3,13 +3,18 @@ live scan path (Stage A -> Stage B -> exits -> outcomes) against the local JSON 
 
   python -m tests.test_offline
 """
-import shutil, sys
+import os, shutil, sys
 from pathlib import Path
 import pandas as pd
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-store_path = ROOT / "data" / "local_store.json"
+store_path = ROOT / "data" / "test_store.json"
+os.environ["LOCAL_STORE_PATH"] = str(store_path)
+# Blank (not unset) so load_dotenv, which never overrides, can't point the test at
+# real Supabase or Telegram once .env is filled in.
+for k in ("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"):
+    os.environ[k] = ""
 if store_path.exists():
     store_path.unlink()
 

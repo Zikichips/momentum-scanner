@@ -70,24 +70,17 @@ def main():
         df = data.load_csv(args.csv)
         all_results += run_symbol(args.csv.split("/")[-1].replace(".csv", ""), args.asset_class, df)
     else:
-        ex = data._exchange() if args.asset_class == "crypto" else None
-        syms = args.symbols or (data.crypto_universe(ex)[:30] if args.asset_class == "crypto" else data.stock_universe())
-        bars_needed = args.days * 24
+        syms = args.symbols or (data.crypto_universe()[:30] if args.asset_class == "crypto" else data.stock_universe())
+        hist_ex = None
+        if args.asset_class == "crypto":
+            import ccxt
+            hist_ex = getattr(ccxt, CFG["backtest"]["history_exchange"])({"enableRateLimit": True})
+            hist_ex.load_markets()
         for s in syms:
             try:
-                # ccxt limits per call; page backwards
-                frames, since = [], int((datetime.now(timezone.utc) - timedelta(days=args.days)).timestamp() * 1000)
-                while True:
-                    raw = ex.fetch_ohlcv(s, timeframe="1h", since=since, limit=720)
-                    if not raw:
-                        break
-                    frames += raw
-                    since = raw[-1][0] + 1
-                    if len(frames) >= bars_needed or len(raw) < 2:
-                        break
-                df = pd.DataFrame(frames, columns=["ts", *data.COLS])
-                df["ts"] = pd.to_datetime(df["ts"], unit="ms", utc=True)
-                df = df.drop_duplicates("ts").set_index("ts")
+                if hist_ex is not None and s not in hist_ex.markets:
+                    print(f"{s}: not listed on {hist_ex.id}, skipped"); continue
+                df = data.crypto_history(s, "1h", args.days, hist_ex)
                 r = run_symbol(s, args.asset_class, df)
                 print(f"{s}: {len(r)} setups")
                 all_results += r
