@@ -92,7 +92,8 @@ def _grade_alert(bo, close: float, day: pd.Timestamp, hourly: pd.DataFrame) -> d
         return {"entry": setup.entry, "trade": "no bars yet", "rule_return": None, "r_multiple": None}
     still_open = fired + timedelta(days=14) > hourly.index[-1] and patch["outcome"] in ("expired", "t1")
     return {"entry": setup.entry, "trade": patch["outcome"] + (" (open, marked at last bar)" if still_open else ""),
-            "rule_return": patch["rule_return"], "r_multiple": patch["r_multiple"]}
+            "rule_return": patch["rule_return"], "r_multiple": patch["r_multiple"],
+            "position_usd": setup.position_usd, "pnl_usd": round(setup.position_usd * patch["rule_return"] / 100, 2)}
 
 
 # ------------------------------------------------------------------ report helpers
@@ -124,7 +125,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=90)
     ap.add_argument("--universe", choices=["coinbase", "kraken"], default="coinbase")
+    ap.add_argument("--capital", type=float, help="override account.capital_usd for this run (sizing / $ P&L only)")
     args = ap.parse_args()
+    if args.capital:
+        CFG["account"]["capital_usd"] = args.capital
 
     import ccxt
     ex = ccxt.coinbase({"enableRateLimit": True})
@@ -281,6 +285,11 @@ def main():
         f"- Alert day itself was already a mover: {sum(p['alert_day_was_mover'] == 'yes' for p in judged)} of {len(judged)}.",
         f"- Avg R per alert, all judged alerts: **{_avg([p['r_multiple'] for p in judged])}** "
         f"(R known for {sum(p['r_multiple'] is not None for p in judged)} of {len(judged)}).",
+        f"- Dollars at ${CFG['account']['capital_usd']:,.0f} capital ({CFG['account']['risk_per_trade_pct']}% risk, "
+        f"{CFG['account']['max_position_pct']}% cap), no fees: total **${sum(p.get('pnl_usd') or 0 for p in judged):,.2f}** "
+        f"over {sum(p.get('pnl_usd') is not None for p in judged)} trades, avg ${_avg([p.get('pnl_usd') for p in judged])}/alert; "
+        f"became mover ${sum(p.get('pnl_usd') or 0 for p in yes):,.2f}, did not ${sum(p.get('pnl_usd') or 0 for p in no):,.2f}. "
+        f"Each alert is traded independently, so overlapping positions can exceed capital.",
         f"- Avg R — became mover: **{_avg([p['r_multiple'] for p in yes])}**; did not: **{_avg([p['r_multiple'] for p in no])}**.",
         f"- Alerts that did not become movers (R known for {len(no_r)}): "
         f"≤ −1R: {sum(r <= -1 for r in no_r)}, −1R to 0: {sum(-1 < r <= 0 for r in no_r)}, > 0: {sum(r > 0 for r in no_r)}; "
@@ -308,11 +317,13 @@ def main():
         "",
         _md_table(sorted(precision, key=lambda p: p["alert_day"]),
                   ["alert_day", "symbol", "impulse_pct", "alert_day_was_mover", "became_mover", "days_to_mover",
-                   "entry", "trade", "rule_return", "r_multiple"]),
+                   "entry", "trade", "rule_return", "r_multiple", "position_usd", "pnl_usd"]),
         "",
     ]
     report = "\n".join(lines)
-    out = ROOT / "data" / ("movers_eval.md" if args.universe == "coinbase" else f"movers_eval_{args.universe}.md")
+    suffix = ("" if args.universe == "coinbase" else f"_{args.universe}") + ("" if args.days == 90 else f"_{args.days}d") \
+        + (f"_{args.capital:g}usd" if args.capital else "")
+    out = ROOT / "data" / f"movers_eval{suffix}.md"
     out.write_text(report)
     print(report.split("## Caught movers")[0])
     print("written", out)
