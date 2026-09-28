@@ -41,6 +41,11 @@ store = db.Store()
 n_a = scan.stage_a(store)
 assert n_a == 1, f"expected 1 breakout, got {n_a}"
 print("Stage A OK ->", store.watching()[0]["symbol"])
+bo_alerts = [x for x in store.open_alerts() if x["entry_type"] == "breakout"]
+assert len(bo_alerts) == 1, f"expected 1 breakout-entry alert, got {len(bo_alerts)}"
+ba = bo_alerts[0]
+assert ba["stop"] < ba["entry"] < ba["target1"] < ba["target2"] and ba["reward_risk"] >= 2
+print(f"Breakout entry OK -> entry {ba['entry']:.2f} stop {ba['stop']:.2f} t1 {ba['target1']:.2f} t2 {ba['target2']:.2f} size ${ba['position_usd']}")
 
 # Advance to pullback base and run Stage B.
 hist = full[full.index <= CUT]
@@ -50,15 +55,21 @@ from scanner.config import CFG
 CFG["breakout"]["in_play_expiry_days"] = 10_000
 n_b = scan.stage_b(store)
 assert n_b == 1, f"expected 1 setup, got {n_b}"
-a = store.open_alerts()[0]
+pb_alerts = [x for x in store.open_alerts() if x["entry_type"] == "pullback"]
+assert len(pb_alerts) == 1
+a = pb_alerts[0]
 print(f"Stage B OK -> entry {a['entry']:.2f} stop {a['stop']:.2f} t1 {a['target1']:.2f} t2 {a['target2']:.2f} size ${a['position_usd']}")
 
 # Advance to end and grade (fired_at is "now" in live; pin it to the cut for the sample).
 hist = full
 a["fired_at"] = CUT.isoformat()
-patch = outcomes.grade(a, hist, close_at_end=True)
-store.update("alerts", a["id"], patch)
+store.update("alerts", a["id"], outcomes.grade(a, hist, close_at_end=True))
+ba["fired_at"] = BO_CUT.isoformat()
+store.update("alerts", ba["id"], outcomes.grade(ba, hist, close_at_end=True))
 sb = outcomes.scoreboard(store.select("alerts"))
-assert sb["alerts_graded"] == 1 and sb["wins"] == 1
+assert sb["pullback"]["alerts_graded"] == 1 and sb["pullback"]["wins"] == 1
+assert sb["breakout"]["alerts_graded"] == 1 and sb["overall"]["alerts_graded"] == 2
+row = outcomes.scoreboard_row(sb)
+assert row["pullback_n_graded"] == 1 and row["breakout_n_graded"] == 1
 print("Outcomes OK ->", sb)
 print("ALL OK")

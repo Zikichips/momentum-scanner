@@ -16,7 +16,7 @@ export default async function AlertsPage() {
       <div className="wrap">
         <table>
           <thead><tr>
-            <th>Fired</th><th>Symbol</th><th>Entry</th><th>Stop</th><th>T1</th><th>T2</th><th>R:R</th><th>Size</th>
+            <th>Fired</th><th>Symbol</th><th>Type</th><th>Entry</th><th>Stop</th><th>T1</th><th>T2</th><th>R:R</th><th>Size</th>
             <th>Outcome</th><th>Rule ret</th><th>R</th><th>Hold 7d</th><th>MFE/MAE 7d</th><th>Notes</th>
           </tr></thead>
           <tbody>
@@ -24,6 +24,7 @@ export default async function AlertsPage() {
               <tr key={a.id}>
                 <td>{new Date(a.fired_at).toLocaleString()}</td>
                 <td><strong>{a.symbol}</strong></td>
+                <td>{a.entry_type ?? "pullback"}</td>
                 <td>{num(a.entry)}</td><td>{num(a.stop)}</td><td>{num(a.target1)}</td><td>{num(a.target2)}</td>
                 <td>{a.reward_risk.toFixed(1)}</td><td>${a.position_usd.toFixed(0)}</td>
                 <td className={a.outcome === "stop" ? "down" : a.outcome && a.outcome !== "open" ? "up" : "muted"}>{a.outcome ?? "open"}</td>
@@ -34,7 +35,7 @@ export default async function AlertsPage() {
                 <td className="muted">{a.notes}</td>
               </tr>
             ))}
-            {alerts.length === 0 && <tr><td colSpan={14} className="muted">No alerts yet. The scanner writes here when a setup fires.</td></tr>}
+            {alerts.length === 0 && <tr><td colSpan={15} className="muted">No alerts yet. The scanner writes here when a setup fires.</td></tr>}
           </tbody>
         </table>
       </div>

@@ -25,10 +25,13 @@ def build() -> str:
     lines += ["", "*In play (watching for pullback)*"]
     lines += [f"• {w['symbol']} broke {w['breakout_level']:.4g} on {w['breakout_date']}" for w in watching] or ["• none"]
     lines += ["", "*Scoreboard*"]
-    if sb["alerts_graded"]:
-        lines.append(f"• {sb['alerts_graded']} graded · win {sb['win_rate']:.0%} · avg R {sb['avg_r']} · vs hold-7d {sb['vs_hold_7d']:+.1f}pp")
-    else:
-        lines.append("• no graded alerts yet")
+    for label in ("overall", "pullback", "breakout"):
+        st = sb[label]
+        if st["alerts_graded"]:
+            vs = f"{st['vs_hold_7d']:+.1f}pp" if st["vs_hold_7d"] is not None else "–"
+            lines.append(f"• {label}: {st['alerts_graded']} graded · win {st['win_rate']:.0%} · avg R {st['avg_r']} · vs hold-7d {vs}")
+        else:
+            lines.append(f"• {label}: no graded alerts yet")
     return "\n".join(lines)
 
 

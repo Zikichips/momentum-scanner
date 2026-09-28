@@ -21,6 +21,11 @@ timeframes:
   daily: 1d
   intraday: 1h              # used for pullback watch; 15m in the workflow schedule is scan frequency, not bar size
 
+# Entry types. Both are graded separately; remove one to disable it.
+#   pullback: wait for Stage B (controlled pullback on hourly bars)
+#   breakout: buy the close of the Stage A breakout day
+entries: [pullback, breakout]
+
 # Stage A — breakout detection (daily bars)
 breakout:
   lookback_high_days: 20
@@ -31,6 +36,13 @@ breakout:
     stocks: 12
   impulse_window_days: 3
   in_play_expiry_days: 5     # drop if no setup within N days of breakout
+
+# Breakout entry (fires on the Stage A bar)
+breakout_entry:
+  stop_buffer_pct: 3.0       # stop = breakout_level x (1 - this/100)
+  t1_multiple: 1.0           # T1 = entry + this x (entry - impulse_low); take half
+  t2_multiple: 2.0           # T2 = entry + this x (entry - impulse_low)
+  min_reward_risk: 2.0       # R:R to T2
 
 # Stage B — pullback setup (intraday bars)
 pullback:

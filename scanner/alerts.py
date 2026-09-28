@@ -21,7 +21,7 @@ def send(text: str) -> None:
 def format_setup(s: Setup) -> str:
     risk_pct = (s.entry - s.stop) / s.entry * 100
     return (
-        f"*MOMENTUM SETUP — {s.symbol}* ({s.asset_class})\n"
+        f"*MOMENTUM SETUP — {s.symbol}* ({s.asset_class} · {s.entry_type} entry)\n"
         f"Entry  `{s.entry:.4g}`\n"
         f"Stop   `{s.stop:.4g}`  (−{risk_pct:.1f}%)\n"
         f"T1     `{s.target1:.4g}`  (take half)\n"

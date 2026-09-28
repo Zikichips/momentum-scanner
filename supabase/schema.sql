@@ -19,7 +19,7 @@ create table if not exists in_play (
   unique (symbol, breakout_date)
 );
 
--- Stage B setups that fired. One row per alert. Never deleted; graded by the outcome tracker.
+-- Setups that fired (Stage B pullback entries and Stage A breakout entries). One row per alert. Never deleted; graded by the outcome tracker.
 create table if not exists alerts (
   id              uuid primary key default gen_random_uuid(),
   in_play_id      uuid references in_play(id) on delete set null,
@@ -32,7 +32,7 @@ create table if not exists alerts (
   target2         double precision not null,
   reward_risk     double precision not null,
   position_usd    double precision not null,
-  retrace_pct     double precision not null,
+  retrace_pct     double precision not null,   -- 0 for breakout entries
   ema_value       double precision,
   notes           text,
   -- Outcome fields, filled by outcomes.py
@@ -108,6 +108,18 @@ create table if not exists scoreboard_daily (
   expectancy_r    double precision,
   vs_hold_7d      double precision              -- avg rule_return - avg hold_7d_return
 );
+
+-- Migration: entry types (pullback = wait for Stage B, breakout = buy the Stage A close).
+-- Safe to re-run; also applies to databases created before entry types existed.
+alter table alerts add column if not exists entry_type text default 'pullback';
+alter table alerts drop constraint if exists alerts_entry_type_check;
+alter table alerts add constraint alerts_entry_type_check check (entry_type in ('pullback','breakout'));
+alter table scoreboard_daily add column if not exists pullback_n_graded int;
+alter table scoreboard_daily add column if not exists pullback_win_rate double precision;
+alter table scoreboard_daily add column if not exists pullback_avg_r double precision;
+alter table scoreboard_daily add column if not exists breakout_n_graded int;
+alter table scoreboard_daily add column if not exists breakout_win_rate double precision;
+alter table scoreboard_daily add column if not exists breakout_avg_r double precision;
 
 -- Row-level security: dashboard uses the anon key and may only read.
 alter table in_play enable row level security;

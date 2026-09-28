@@ -1,8 +1,9 @@
 """Pure strategy logic. No I/O. Used by the live scanner and the backtester alike.
 
 Stage A  detect_breakout(daily_df)       -> Breakout | None
-Stage B  detect_pullback(intraday_df, bo) -> Setup | None
-Stage C  build_setup(...)                 -> targets, stop, sizing
+         breakout_entry(bo, close)       -> Setup | None   (entry type "breakout")
+Stage B  detect_pullback(intraday_df, bo) -> Setup | None   (entry type "pullback")
+Stage C  targets, stop, sizing live inside each entry function
 """
 from __future__ import annotations
 from dataclasses import dataclass, asdict
@@ -39,9 +40,10 @@ class Setup:
     reward_risk: float
     position_usd: float
     retrace_pct: float
-    ema_value: float
-    pullback_low: float
+    ema_value: float | None
+    pullback_low: float | None
     notes: str = ""
+    entry_type: str = "pullback"
 
     def to_row(self) -> dict:
         return asdict(self)
@@ -90,6 +92,42 @@ def update_impulse_high(bo: Breakout, daily: pd.DataFrame) -> Breakout:
     if not since.empty:
         bo.impulse_high = max(bo.impulse_high, float(since["high"].max()))
     return bo
+
+
+def breakout_entry(bo: Breakout, close: float) -> Setup | None:
+    """Entry type "breakout": buy the close of the breakout day, no pullback wait.
+    Stop under the broken level; targets are multiples of the impulse so far."""
+    e = CFG["breakout_entry"]
+    entry = float(close)
+    stop = bo.breakout_level * (1 - e["stop_buffer_pct"] / 100)
+    leg = entry - bo.impulse_low
+    target1 = entry + e["t1_multiple"] * leg
+    target2 = entry + e["t2_multiple"] * leg
+    risk = entry - stop
+    if risk <= 0 or leg <= 0:
+        return None
+    rr = (target2 - entry) / risk
+    if rr < e["min_reward_risk"]:
+        return None
+    return Setup(
+        symbol=bo.symbol,
+        asset_class=bo.asset_class,
+        entry=entry,
+        stop=float(stop),
+        target1=float(target1),
+        target2=float(target2),
+        reward_risk=float(rr),
+        position_usd=position_size(entry, stop),
+        retrace_pct=0.0,
+        ema_value=None,
+        pullback_low=None,
+        notes=f"breakout over {bo.breakout_level:.4g}, impulse +{bo.impulse_pct:.0f}%",
+        entry_type="breakout",
+    )
+
+
+def entries_enabled() -> list[str]:
+    return CFG.get("entries", ["pullback"])
 
 
 # ------------------------------------------------------------------ Stage B

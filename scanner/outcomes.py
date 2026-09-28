@@ -88,15 +88,19 @@ def grade(alert: dict, df: pd.DataFrame, max_days: int = 14, close_at_end: bool 
     return patch
 
 
-def scoreboard(alerts: list[dict]) -> dict:
+ENTRY_TYPES = ("pullback", "breakout")
+
+
+def _stats(alerts: list[dict]) -> dict:
     graded = [a for a in alerts if a.get("outcome") not in (None, "open")]
     wins = [a for a in graded if (a.get("r_multiple") or 0) > 0]
     losses = [a for a in graded if (a.get("r_multiple") or 0) <= 0]
     rs = [a["r_multiple"] for a in graded if a.get("r_multiple") is not None]
+    win_rs = [a["r_multiple"] for a in wins if a.get("r_multiple") is not None]
+    loss_rs = [a["r_multiple"] for a in losses if a.get("r_multiple") is not None]
     holds = [a["hold_7d_return"] for a in graded if a.get("hold_7d_return") is not None]
     rules = [a["rule_return"] for a in graded if a.get("rule_return") is not None]
     return {
-        "day": datetime.now(timezone.utc).date().isoformat(),
         "alerts_total": len(alerts),
         "alerts_graded": len(graded),
         "wins": len(wins),
@@ -104,8 +108,31 @@ def scoreboard(alerts: list[dict]) -> dict:
         "win_rate": round(len(wins) / len(graded), 3) if graded else None,
         "avg_r": round(sum(rs) / len(rs), 3) if rs else None,
         "expectancy_r": round(sum(rs) / len(rs), 3) if rs else None,
+        "avg_win_r": round(sum(win_rs) / len(win_rs), 3) if win_rs else None,
+        "avg_loss_r": round(sum(loss_rs) / len(loss_rs), 3) if loss_rs else None,
         "vs_hold_7d": round(sum(rules) / len(rules) - sum(holds) / len(holds), 3) if rules and holds else None,
     }
+
+
+def scoreboard(alerts: list[dict]) -> dict:
+    """{day, overall: {...}, pullback: {...}, breakout: {...}}. Alerts from before
+    entry types existed have no entry_type and count as pullback."""
+    out = {"day": datetime.now(timezone.utc).date().isoformat(), "overall": _stats(alerts)}
+    for t in ENTRY_TYPES:
+        out[t] = _stats([a for a in alerts if (a.get("entry_type") or "pullback") == t])
+    return out
+
+
+def scoreboard_row(sb: dict) -> dict:
+    """Flatten scoreboard() into a scoreboard_daily row."""
+    o = sb["overall"]
+    row = {"day": sb["day"], **{k: o[k] for k in ("alerts_total", "alerts_graded", "wins", "losses",
+                                                   "win_rate", "avg_r", "expectancy_r", "vs_hold_7d")}}
+    for t in ENTRY_TYPES:
+        row[f"{t}_n_graded"] = sb[t]["alerts_graded"]
+        row[f"{t}_win_rate"] = sb[t]["win_rate"]
+        row[f"{t}_avg_r"] = sb[t]["avg_r"]
+    return row
 
 
 def main():
@@ -128,7 +155,7 @@ def main():
         except Exception as e:
             print(f"[outcomes] {a['symbol']}: {e}")
     sb = scoreboard(store.select("alerts"))
-    store.upsert("scoreboard_daily", sb, on_conflict="day")
+    store.upsert("scoreboard_daily", scoreboard_row(sb), on_conflict="day")
     print(sb)
 
 

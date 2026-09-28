@@ -5,7 +5,7 @@ export const revalidate = 300;
 export default async function ScoreboardPage() {
   const [{ data: sb }, { data: al }] = await Promise.all([
     supabase.from("scoreboard_daily").select("*").order("day", { ascending: false }).limit(60),
-    supabase.from("alerts").select("outcome,r_multiple,rule_return,hold_7d_return,symbol").not("outcome", "is", null).neq("outcome", "open"),
+    supabase.from("alerts").select("outcome,r_multiple,rule_return,hold_7d_return,symbol,entry_type").not("outcome", "is", null).neq("outcome", "open"),
   ]);
   const rows = (sb ?? []) as Scoreboard[];
   const latest = rows[0];
@@ -16,6 +16,20 @@ export default async function ScoreboardPage() {
     <div className="tile"><div className="k">{k}</div><div className={`v ${c ?? ""}`}>{v}</div></div>
   );
   const pct = (v: number | null | undefined) => v == null ? "–" : `${(v * 100).toFixed(0)}%`;
+  const avg = (xs: number[]) => xs.length ? xs.reduce((s, x) => s + x, 0) / xs.length : null;
+  // Same definitions as outcomes.scoreboard(); alerts from before entry types count as pullback.
+  const byType = (["pullback", "breakout"] as const).map(t => {
+    const g = graded.filter(a => (a.entry_type ?? "pullback") === t);
+    const rs = g.flatMap(a => a.r_multiple == null ? [] : [a.r_multiple]);
+    const rules = avg(g.flatMap(a => a.rule_return == null ? [] : [a.rule_return]));
+    const holds = avg(g.flatMap(a => a.hold_7d_return == null ? [] : [a.hold_7d_return]));
+    return {
+      t, n: g.length,
+      winRate: g.length ? g.filter(a => (a.r_multiple ?? 0) > 0).length / g.length : null,
+      avgR: avg(rs),
+      vsHold: rules != null && holds != null ? rules - holds : null,
+    };
+  });
 
   return (
     <>
@@ -27,6 +41,22 @@ export default async function ScoreboardPage() {
         <Tile k="Avg R" v={latest?.avg_r?.toFixed(2) ?? "–"} c={(latest?.avg_r ?? 0) > 0 ? "up" : "down"} />
         <Tile k="Rules vs hold 7d" v={latest?.vs_hold_7d == null ? "–" : `${latest.vs_hold_7d > 0 ? "+" : ""}${latest.vs_hold_7d.toFixed(1)}pp`} c={(latest?.vs_hold_7d ?? 0) > 0 ? "up" : "down"} />
         {byOutcome.map(b => <Tile key={b.o} k={`Hit ${b.o.toUpperCase()}`} v={String(b.n)} />)}
+      </div>
+      <h2 style={{ fontSize: 16 }}>By entry type</h2>
+      <div className="wrap">
+        <table>
+          <thead><tr><th>Entry</th><th>n</th><th>Win rate</th><th>Avg R</th><th>Expectancy (R/trade)</th><th>vs hold 7d</th></tr></thead>
+          <tbody>
+            {byType.map(r => (
+              <tr key={r.t}>
+                <td><strong>{r.t}</strong></td><td>{r.n}</td><td>{pct(r.winRate)}</td>
+                <td className={r.avgR == null ? "muted" : r.avgR > 0 ? "up" : "down"}>{r.avgR?.toFixed(2) ?? "–"}</td>
+                <td className={r.avgR == null ? "muted" : r.avgR > 0 ? "up" : "down"}>{r.avgR?.toFixed(2) ?? "–"}</td>
+                <td className={r.vsHold == null ? "muted" : r.vsHold > 0 ? "up" : "down"}>{r.vsHold == null ? "–" : `${r.vsHold > 0 ? "+" : ""}${r.vsHold.toFixed(1)}pp`}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
       <h2 style={{ fontSize: 16 }}>Daily history</h2>
       <div className="wrap">

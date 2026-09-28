@@ -11,7 +11,7 @@ from datetime import datetime, timezone, timedelta
 import pandas as pd
 from .config import CFG
 from . import data
-from .strategy import detect_breakout, detect_pullback, update_impulse_high, Breakout
+from .strategy import detect_breakout, detect_pullback, breakout_entry, entries_enabled, update_impulse_high, Breakout
 from .db import Store
 from . import alerts as notify
 
@@ -35,6 +35,12 @@ def universe() -> list[tuple[str, str]]:
     return out
 
 
+def _insert_alert(store: Store, setup, in_play_id) -> None:
+    row = setup.to_row(); row.pop("pullback_low")
+    row.update({"in_play_id": in_play_id, "outcome": "open", "fired_at": datetime.now(timezone.utc)})
+    store.insert("alerts", row)
+
+
 # ------------------------------------------------------------------ Stage A
 def stage_a(store: Store) -> int:
     found = 0
@@ -48,14 +54,21 @@ def stage_a(store: Store) -> int:
             daily = data.ohlcv(sym, cls, CFG["timeframes"]["daily"], limit=120, ex=ex)
             bo = detect_breakout(daily, sym, cls)
             if bo and (sym, bo.breakout_date.strftime("%Y-%m-%d")) not in already:
-                store.upsert("in_play", {
+                # The in_play row is created even when the breakout entry fires, so the
+                # pullback entry can still trigger later. The two are graded separately.
+                ip = store.upsert("in_play", {
                     "symbol": sym, "asset_class": cls,
                     "breakout_date": bo.breakout_date.strftime("%Y-%m-%d"),
                     "breakout_level": bo.breakout_level, "impulse_low": bo.impulse_low,
                     "impulse_high": bo.impulse_high, "impulse_volume": bo.impulse_volume,
                     "status": "watching",
                 }, on_conflict="symbol,breakout_date")
-                notify.send(notify.format_breakout(bo))
+                msg = notify.format_breakout(bo)
+                setup = breakout_entry(bo, float(daily["close"].iloc[-1])) if "breakout" in entries_enabled() else None
+                if setup:
+                    _insert_alert(store, setup, ip.get("id"))
+                    msg += "\n\n" + notify.format_setup(setup)
+                notify.send(msg)
                 found += 1
         except Exception as e:  # one bad symbol must not kill the run
             print(f"[stage_a] {sym}: {e}")
@@ -80,13 +93,13 @@ def stage_b(store: Store) -> int:
             if float(daily["close"].iloc[-1]) < bo.breakout_level:
                 store.update("in_play", r["id"], {"status": "failed", "updated_at": datetime.now(timezone.utc)})
                 continue
+            store.update("in_play", r["id"], {"impulse_high": bo.impulse_high, "updated_at": datetime.now(timezone.utc)})
+            if "pullback" not in entries_enabled():
+                continue   # row stays "watching" until expiry, so Stage A won't re-fire meanwhile
             intraday = data.ohlcv(bo.symbol, bo.asset_class, CFG["timeframes"]["intraday"], limit=300, ex=ex)
             setup = detect_pullback(intraday, bo)
-            store.update("in_play", r["id"], {"impulse_high": bo.impulse_high, "updated_at": datetime.now(timezone.utc)})
             if setup:
-                row = setup.to_row(); row.pop("pullback_low")
-                row.update({"in_play_id": r["id"], "outcome": "open", "fired_at": datetime.now(timezone.utc)})
-                store.insert("alerts", row)
+                _insert_alert(store, setup, r["id"])
                 store.update("in_play", r["id"], {"status": "triggered"})
                 notify.send(notify.format_setup(setup))
                 fired += 1
