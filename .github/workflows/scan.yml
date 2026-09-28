@@ -1,0 +1,38 @@
+name: scan
+on:
+  schedule:
+    - cron: "*/15 * * * *"     # every 15 min (GitHub may delay a few minutes under load)
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "a | b | all"
+        default: "all"
+
+concurrency:
+  group: scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      # Stage A (breakouts) only needs daily bars; run it on the hour. Stage B + exits every 15 min.
+      - name: decide stage
+        id: st
+        run: |
+          if [ -n "${{ github.event.inputs.stage }}" ]; then echo "stage=${{ github.event.inputs.stage }}" >> $GITHUB_OUTPUT
+          elif [ "$(date -u +%M)" -lt 15 ]; then echo "stage=all" >> $GITHUB_OUTPUT
+          else echo "stage=b" >> $GITHUB_OUTPUT; fi
+      - run: python -m scanner.scan --stage ${{ steps.st.outputs.stage }}

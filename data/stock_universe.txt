@@ -1,0 +1,8 @@
+# One ticker per line. Enable in config.yaml -> universe.stocks.enabled. Start small.
+NVDA
+LLY
+GEV
+GS
+CVX
+VOO
+QQQ

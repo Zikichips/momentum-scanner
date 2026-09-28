@@ -1,0 +1,64 @@
+# Momentum scanner configuration.
+# Everything tunable lives here; the code reads this file at startup.
+
+account:
+  capital_usd: 1000          # trading bankroll (NOT the long-term portfolio)
+  risk_per_trade_pct: 5      # a stop-out costs this % of capital
+  max_position_pct: 50       # never put more than this % of capital in one trade
+
+universe:
+  crypto:
+    enabled: true
+    exchange: kraken         # ccxt exchange id; kraken is Canada-friendly and needs no API key for public data
+    quote: USD
+    top_n_by_volume: 150     # scan the N most liquid pairs
+    exclude: [USDT, USDC, DAI, TUSD, PYUSD, EUR, GBP, CAD]   # stablecoins / fiat pairs
+  stocks:
+    enabled: false           # flip on in week 2
+    tickers_file: data/stock_universe.txt
+
+timeframes:
+  daily: 1d
+  intraday: 1h              # used for pullback watch; 15m in the workflow schedule is scan frequency, not bar size
+
+# Stage A — breakout detection (daily bars)
+breakout:
+  lookback_high_days: 20
+  volume_multiple: 3.0       # today's volume >= this x 30-day average
+  volume_avg_days: 30
+  min_impulse_pct:           # % gain over the impulse window
+    crypto: 25
+    stocks: 12
+  impulse_window_days: 3
+  in_play_expiry_days: 5     # drop if no setup within N days of breakout
+
+# Stage B — pullback setup (intraday bars)
+pullback:
+  min_retrace: 0.25          # fraction of impulse range
+  max_retrace: 0.55          # beyond this the move is considered failed
+  ema_period: 20
+  require_ema_rising: true
+  require_close_above_ema: true
+  pullback_volume_ratio_max: 0.8   # avg pullback volume / avg impulse volume must be below this
+  min_reward_risk: 2.0
+
+# Stage C — targets
+targets:
+  t1: impulse_high           # take half off
+  t2_extension: 0.5          # impulse_high + this x impulse_range
+  stop_buffer_pct: 1.0       # stop sits this % below pullback low
+
+# Footprint screener (module 2)
+footprints:
+  volume_multiple: 3.0
+  max_abs_move_pct: 5        # "quiet" accumulation: big volume, small move
+  oi_change_pct_min: 15      # open-interest change with flat price (crypto futures only)
+
+# Catalyst calendar (module 1)
+catalysts:
+  lookahead_days: 14
+
+alerts:
+  channel: telegram          # telegram | email | none
+  digest_hour_local: 7
+  timezone: America/Edmonton

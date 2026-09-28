@@ -1,0 +1,12 @@
+.env
+.env.local
+data/local_store.json
+data/backtest_*.csv
+__pycache__/
+*.pyc
+dashboard/node_modules/
+dashboard/.next/
+dashboard/.vercel
+.DS_Store
+.venv/
+HANDOFF.private.md

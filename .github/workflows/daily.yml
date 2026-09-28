@@ -1,0 +1,29 @@
+name: daily
+on:
+  schedule:
+    - cron: "0 13 * * *"       # 13:00 UTC = 07:00 Edmonton (MDT). Change to 14:00 UTC in winter (MST).
+  workflow_dispatch:
+
+jobs:
+  daily:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      CRYPTOPANIC_TOKEN: ${{ secrets.CRYPTOPANIC_TOKEN }}
+      NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY }}
+      COINMARKETCAL_KEY: ${{ secrets.COINMARKETCAL_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: grade alerts + scoreboard
+        run: python -m scanner.outcomes
+      - name: catalysts + footprints + digest
+        run: python -m scanner.digest
