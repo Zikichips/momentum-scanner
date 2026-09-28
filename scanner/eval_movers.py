@@ -2,6 +2,7 @@
 
   python -m scanner.eval_movers              # last 90 days
   python -m scanner.eval_movers --days 60
+  python -m scanner.eval_movers --universe kraken   # only the live scanner's Kraken top-N pairs
 
 Movers: for each UTC day, the 10 Coinbase-listed USD pairs with the largest close-to-close
 gain, keeping only gains >= 20%. (Coinbase's own list is a rolling 24h; UTC daily closes are
@@ -18,7 +19,11 @@ Recall:    for each (coin, mover day D), was there an alert on D-5..D-1?
 Precision: for each alert on day A, was the coin a mover on A+1..A+5?
 Matrix:    every (coin, day D) in the window: mover on D x alert on D-5..D-1.
 
-Writes data/movers_eval.md.
+--universe kraken restricts everything (movers list included) to data.crypto_universe(),
+i.e. the pairs the live scanner scans, keeping those Coinbase also lists (history source).
+That list is today's top-N by volume, so it favours coins that moved recently.
+
+Writes data/movers_eval.md (or data/movers_eval_kraken.md).
 """
 from __future__ import annotations
 import argparse
@@ -118,12 +123,19 @@ def _pct(a, b):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=90)
+    ap.add_argument("--universe", choices=["coinbase", "kraken"], default="coinbase")
     args = ap.parse_args()
 
     import ccxt
     ex = ccxt.coinbase({"enableRateLimit": True})
     ex.load_markets()
     syms = _universe(ex)
+    universe_note = f"{len(syms)} Coinbase USD pairs"
+    if args.universe == "kraken":
+        kraken = data.crypto_universe()
+        syms = [s for s in kraken if s in ex.markets]
+        universe_note = (f"live scanner universe: Kraken top {len(kraken)} by volume today, "
+                         f"{len(syms)} of them listed on Coinbase")
     b, e = CFG["breakout"], CFG["breakout_entry"]
     warm = max(b["lookback_high_days"], b["volume_avg_days"]) + b["impulse_window_days"] + 3
 
@@ -242,7 +254,7 @@ def main():
     lines = [
         f"# Stage A vs Coinbase top movers",
         "",
-        f"Window {start:%Y-%m-%d} to {last_day:%Y-%m-%d} ({args.days} days), {len(daily)} Coinbase USD pairs. "
+        f"Window {start:%Y-%m-%d} to {last_day:%Y-%m-%d} ({args.days} days), {universe_note}, {len(daily)} with data. "
         f"Mover = top {TOP_N} by UTC close-to-close gain that day, gain ≥ {MIN_GAIN:.0f}%. "
         f"Thresholds as in config.yaml: close > {b['lookback_high_days']}-day high, volume ≥ {b['volume_multiple']}× "
         f"{b['volume_avg_days']}-day avg, 3-day gain ≥ {b['min_impulse_pct']['crypto']}%. "
@@ -267,6 +279,8 @@ def main():
         f"- Alerts in window: **{len(precision)}** ({len(precision) - len(judged)} too recent to judge).",
         f"- Became a mover on A+1..A+5: **{len(yes)} of {len(judged)} ({_pct(len(yes), len(judged))})**.",
         f"- Alert day itself was already a mover: {sum(p['alert_day_was_mover'] == 'yes' for p in judged)} of {len(judged)}.",
+        f"- Avg R per alert, all judged alerts: **{_avg([p['r_multiple'] for p in judged])}** "
+        f"(R known for {sum(p['r_multiple'] is not None for p in judged)} of {len(judged)}).",
         f"- Avg R — became mover: **{_avg([p['r_multiple'] for p in yes])}**; did not: **{_avg([p['r_multiple'] for p in no])}**.",
         f"- Alerts that did not become movers (R known for {len(no_r)}): "
         f"≤ −1R: {sum(r <= -1 for r in no_r)}, −1R to 0: {sum(-1 < r <= 0 for r in no_r)}, > 0: {sum(r > 0 for r in no_r)}; "
@@ -298,9 +312,10 @@ def main():
         "",
     ]
     report = "\n".join(lines)
-    (ROOT / "data" / "movers_eval.md").write_text(report)
+    out = ROOT / "data" / ("movers_eval.md" if args.universe == "coinbase" else f"movers_eval_{args.universe}.md")
+    out.write_text(report)
     print(report.split("## Caught movers")[0])
-    print("written data/movers_eval.md")
+    print("written", out)
 
 
 if __name__ == "__main__":
