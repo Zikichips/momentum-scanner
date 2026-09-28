@@ -5,7 +5,7 @@ export const revalidate = 300;
 export default async function ScoreboardPage() {
   const [{ data: sb }, { data: al }] = await Promise.all([
     supabase.from("scoreboard_daily").select("*").order("day", { ascending: false }).limit(60),
-    supabase.from("alerts").select("outcome,r_multiple,rule_return,hold_7d_return,symbol,entry_type").not("outcome", "is", null).neq("outcome", "open"),
+    supabase.from("alerts").select("outcome,r_multiple,rule_return,hold_7d_return,symbol,entry_type").not("outcome", "is", null).not("outcome", "in", "(open,skipped_concurrent)"),
   ]);
   const rows = (sb ?? []) as Scoreboard[];
   const latest = rows[0];

@@ -89,10 +89,13 @@ def grade(alert: dict, df: pd.DataFrame, max_days: int = 14, close_at_end: bool 
 
 
 ENTRY_TYPES = ("pullback", "breakout")
+# Setups not taken because account.max_concurrent_trades positions were already open.
+# Never graded, never counted in the stats (but counted as skipped).
+SKIPPED = "skipped_concurrent"
 
 
 def _stats(alerts: list[dict]) -> dict:
-    graded = [a for a in alerts if a.get("outcome") not in (None, "open")]
+    graded = [a for a in alerts if a.get("outcome") not in (None, "open", SKIPPED)]
     wins = [a for a in graded if (a.get("r_multiple") or 0) > 0]
     losses = [a for a in graded if (a.get("r_multiple") or 0) <= 0]
     rs = [a["r_multiple"] for a in graded if a.get("r_multiple") is not None]
@@ -103,6 +106,7 @@ def _stats(alerts: list[dict]) -> dict:
     return {
         "alerts_total": len(alerts),
         "alerts_graded": len(graded),
+        "skipped": sum(a.get("outcome") == SKIPPED for a in alerts),
         "wins": len(wins),
         "losses": len(losses),
         "win_rate": round(len(wins) / len(graded), 3) if graded else None,
@@ -144,6 +148,8 @@ def main():
         fired = pd.Timestamp(a["fired_at"])
         if fired.tzinfo is None:
             fired = fired.tz_localize("UTC")
+        if a.get("outcome") == SKIPPED:
+            continue
         if a.get("outcome") not in (None, "open") and datetime.now(timezone.utc) - fired > timedelta(days=15):
             continue
         try:

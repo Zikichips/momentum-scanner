@@ -28,3 +28,31 @@ Timing: 59 of 72 trades fell in the last six months (Mar–Sep 2026). Breakout: 
 **QNT/USD, 30 days** (`backtest_20260928_095934.csv`): breakout entry 24 Sep at 90.08, stop 74.13, T2 141.90 hit → +43.1%, +2.44R (hold 7d: +155.7%). Pullback: no setup (retrace 57.5% > 0.55 cap, correct for a blow-off).
 
 Verdict: pullback shows no edge. Breakout clears the handoff's thin-edge bar (win 35–45%, avg R > 0.3) but misses the 3× winner/loser bar and leans on three trades. Not yet proven. Next single test: `breakout_entry.t2_multiple` 2.0 → 3.0.
+
+## 2026-09-28 — account grid: concurrency × position cap × capital (breakout entry only)
+
+Command: `python -m scanner.backtest --entry breakout --top 150 --days 365 --grid` (`backtest_20260928_120859.csv`).
+Universe: Kraken top 150 by volume today; 109 also on Coinbase (history source), 41 skipped. Entry/exit thresholds unchanged.
+One account per cell: setups replayed in time order; a setup is skipped when `max_concurrent` trades are open (fired → outcome).
+Sizing via position_size (5% risk, cap as shown). **Fees 0.3% each way included in $ P&L** (entry + exit notional incl. the T1 half); win rate / avg R are before fees.
+Max drawdown is peak-to-trough of realised P&L (closed trades); open-trade swings not modelled. Peak deployed > capital means the cell needs money you don't have.
+
+| capital | max_concurrent | max_position_pct | taken | skipped | win_rate | avg_r | pnl_usd | max_dd_usd | pnl_per_dd | worst_loss_usd | peak_deployed_usd |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 200 | 2 | 50 | 59 | 109 | 0.305 | -0.018 | -44.3 | 228.27 | -0.19 | -15.18 | 200.0 |
+| 200 | 2 | 75 | 59 | 109 | 0.305 | -0.018 | -47.21 | 261.68 | -0.18 | -17.5 | 261.42 |
+| 200 | 3 | 50 | 78 | 90 | 0.295 | -0.049 | -76.52 | 339.48 | -0.23 | -15.18 | 284.84 |
+| 200 | 3 | 75 | 78 | 90 | 0.295 | -0.049 | -81.51 | 374.97 | -0.22 | -17.5 | 346.26 |
+| 200 | none | 50 | 168 | 0 | 0.28 | -0.092 | -289.08 | 588.04 | -0.49 | -15.18 | 3152.09 |
+| 200 | none | 75 | 168 | 0 | 0.28 | -0.092 | -296.9 | 662.0 | -0.45 | -17.5 | 3407.1 |
+| 1000 | 2 | 50 | 59 | 109 | 0.305 | -0.018 | -221.43 | 1141.26 | -0.19 | -75.88 | 1000.0 |
+| 1000 | 2 | 75 | 59 | 109 | 0.305 | -0.018 | -235.96 | 1308.29 | -0.18 | -87.49 | 1307.1 |
+| 1000 | 3 | 50 | 78 | 90 | 0.295 | -0.049 | -382.59 | 1697.33 | -0.23 | -75.88 | 1424.2 |
+| 1000 | 3 | 75 | 78 | 90 | 0.295 | -0.049 | -407.5 | 1874.74 | -0.22 | -87.49 | 1731.3 |
+| 1000 | none | 50 | 168 | 0 | 0.28 | -0.092 | -1445.57 | 2940.18 | -0.49 | -75.88 | 15760.47 |
+| 1000 | none | 75 | 168 | 0 | 0.28 | -0.092 | -1484.41 | 3309.77 | -0.45 | -87.49 | 17035.53 |
+
+Why it's negative when the top-30 run was positive: the 41 trades on the earlier top-30 coins average +0.54R; the other 127 (less liquid coins) average −0.30R. By quarter: Q4-25 +0.40R (26), Q1-26 −0.61R (26), Q2-26 −0.66R (35), Q3-26 +0.18R (80).
+For reference, earlier top-30 coins only, $1,000/50% cap: max 2 concurrent → 19 taken, +$431, DD $275; unlimited → 41 taken, +$572, DD $340 (that subset is picked with hindsight — today's volume ranking).
+
+Verdict: no concurrency/cap setting makes the breakout entry profitable on the full live universe. Least-bad: max_concurrent 2, cap 50% (config default). The cap barely matters (same trades; 75% only enlarges size and drawdown).

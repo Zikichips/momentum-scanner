@@ -36,7 +36,7 @@ create table if not exists alerts (
   ema_value       double precision,
   notes           text,
   -- Outcome fields, filled by outcomes.py
-  outcome         text check (outcome in ('open','stop','t1','t2','expired')),
+  outcome         text check (outcome in ('open','stop','t1','t2','expired','skipped_concurrent')),
   outcome_at      timestamptz,
   mfe_1d double precision, mae_1d double precision,
   mfe_3d double precision, mae_3d double precision,
@@ -120,6 +120,10 @@ alter table scoreboard_daily add column if not exists pullback_avg_r double prec
 alter table scoreboard_daily add column if not exists breakout_n_graded int;
 alter table scoreboard_daily add column if not exists breakout_win_rate double precision;
 alter table scoreboard_daily add column if not exists breakout_avg_r double precision;
+
+-- Migration: setups not taken because max_concurrent_trades positions were open.
+alter table alerts drop constraint if exists alerts_outcome_check;
+alter table alerts add constraint alerts_outcome_check check (outcome in ('open','stop','t1','t2','expired','skipped_concurrent'));
 
 -- Row-level security: dashboard uses the anon key and may only read.
 alter table in_play enable row level security;

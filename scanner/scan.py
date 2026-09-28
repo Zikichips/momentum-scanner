@@ -13,6 +13,7 @@ from .config import CFG
 from . import data
 from .strategy import detect_breakout, detect_pullback, breakout_entry, entries_enabled, update_impulse_high, Breakout
 from .db import Store
+from .outcomes import SKIPPED
 from . import alerts as notify
 
 
@@ -35,10 +36,16 @@ def universe() -> list[tuple[str, str]]:
     return out
 
 
-def _insert_alert(store: Store, setup, in_play_id) -> None:
+def _insert_alert(store: Store, setup, in_play_id) -> bool:
+    """Store a new alert. At account.max_concurrent_trades open alerts it is stored as
+    skipped_concurrent instead (not traded, not graded). Returns True if taken."""
+    limit = CFG["account"].get("max_concurrent_trades")
+    taken = limit is None or len(store.open_alerts()) < limit
     row = setup.to_row(); row.pop("pullback_low")
-    row.update({"in_play_id": in_play_id, "outcome": "open", "fired_at": datetime.now(timezone.utc)})
+    row.update({"in_play_id": in_play_id, "outcome": "open" if taken else SKIPPED,
+                "fired_at": datetime.now(timezone.utc)})
     store.insert("alerts", row)
+    return taken
 
 
 # ------------------------------------------------------------------ Stage A
@@ -66,8 +73,8 @@ def stage_a(store: Store) -> int:
                 msg = notify.format_breakout(bo)
                 setup = breakout_entry(bo, float(daily["close"].iloc[-1])) if "breakout" in entries_enabled() else None
                 if setup:
-                    _insert_alert(store, setup, ip.get("id"))
-                    msg += "\n\n" + notify.format_setup(setup)
+                    taken = _insert_alert(store, setup, ip.get("id"))
+                    msg += "\n\n" + (notify.format_setup(setup) if taken else notify.format_skipped(setup))
                 notify.send(msg)
                 found += 1
         except Exception as e:  # one bad symbol must not kill the run
@@ -99,9 +106,9 @@ def stage_b(store: Store) -> int:
             intraday = data.ohlcv(bo.symbol, bo.asset_class, CFG["timeframes"]["intraday"], limit=300, ex=ex)
             setup = detect_pullback(intraday, bo)
             if setup:
-                _insert_alert(store, setup, r["id"])
+                taken = _insert_alert(store, setup, r["id"])
                 store.update("in_play", r["id"], {"status": "triggered"})
-                notify.send(notify.format_setup(setup))
+                notify.send(notify.format_setup(setup) if taken else notify.format_skipped(setup))
                 fired += 1
         except Exception as e:
             print(f"[stage_b] {bo.symbol}: {e}")

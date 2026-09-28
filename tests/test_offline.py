@@ -72,4 +72,28 @@ assert sb["breakout"]["alerts_graded"] == 1 and sb["overall"]["alerts_graded"] =
 row = outcomes.scoreboard_row(sb)
 assert row["pullback_n_graded"] == 1 and row["breakout_n_graded"] == 1
 print("Outcomes OK ->", sb)
+
+# Concurrency limit, live: with the limit at the number of open alerts, a new setup is
+# stored as skipped_concurrent and not counted as graded.
+from scanner.strategy import Setup
+CFG["account"]["max_concurrent_trades"] = len(store.open_alerts())
+extra = Setup(symbol="TEST/USD", asset_class="crypto", entry=10.0, stop=9.0, target1=12.0, target2=14.0,
+              reward_risk=4.0, position_usd=100.0, retrace_pct=0.0, ema_value=None, pullback_low=None,
+              entry_type="breakout")
+assert scan._insert_alert(store, extra, None) is False
+skipped = [x for x in store.select("alerts") if x["symbol"] == "TEST/USD"]
+assert len(skipped) == 1 and skipped[0]["outcome"] == "skipped_concurrent"
+sb2 = outcomes.scoreboard(store.select("alerts"))
+assert sb2["overall"]["alerts_graded"] == 2 and sb2["overall"]["skipped"] == 1
+
+# Concurrency limit, backtest: three overlapping trades with a limit of 2 -> third skipped.
+from scanner.backtest import apply_portfolio
+t0 = pd.Timestamp("2026-01-01", tz="UTC")
+fake = [{"entry": 10.0, "stop": 9.0, "rule_return": 10.0, "r_multiple": 1.0, "outcome": "t2",
+         "fired_at": t0 + pd.Timedelta(hours=h), "outcome_at": (t0 + pd.Timedelta(days=3)).isoformat()} for h in (0, 1, 2)]
+rows, st = apply_portfolio(fake, 1000, 2, 50, 0.3)
+assert st["taken"] == 2 and st["skipped"] == 1 and rows[2]["outcome"] == "skipped_concurrent"
+_, st = apply_portfolio(fake, 1000, None, 50, 0.3)
+assert st["taken"] == 3 and st["skipped"] == 0
+print("Concurrency OK ->", st)
 print("ALL OK")

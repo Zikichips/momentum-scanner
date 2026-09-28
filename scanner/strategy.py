@@ -205,13 +205,17 @@ def _ts_of_high(df: pd.DataFrame, bo: Breakout) -> pd.Timestamp:
 
 
 # ------------------------------------------------------------------ Stage C
-def position_size(entry: float, stop: float) -> float:
-    """Dollars to deploy so a stop-out costs risk_per_trade_pct of capital."""
+def position_size(entry: float, stop: float, capital: float | None = None,
+                  max_position_pct: float | None = None) -> float:
+    """Dollars to deploy so a stop-out costs risk_per_trade_pct of capital.
+    capital / max_position_pct default to config (overrides are for backtest grids)."""
     a = CFG["account"]
-    risk_usd = a["capital_usd"] * a["risk_per_trade_pct"] / 100
+    capital = a["capital_usd"] if capital is None else capital
+    max_position_pct = a["max_position_pct"] if max_position_pct is None else max_position_pct
+    risk_usd = capital * a["risk_per_trade_pct"] / 100
     per_unit_risk = (entry - stop) / entry
     if per_unit_risk <= 0:
         return 0.0
     size = risk_usd / per_unit_risk
-    cap = a["capital_usd"] * a["max_position_pct"] / 100
+    cap = capital * max_position_pct / 100
     return float(round(min(size, cap), 2))

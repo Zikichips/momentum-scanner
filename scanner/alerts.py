@@ -32,6 +32,13 @@ def format_setup(s: Setup) -> str:
     )
 
 
+def format_skipped(s: Setup) -> str:
+    return (
+        f"*SETUP SKIPPED — {s.symbol}* ({s.entry_type} entry at `{s.entry:.4g}`): setup found but at max positions "
+        f"({CFG['account']['max_concurrent_trades']} open). Logged, not traded."
+    )
+
+
 def format_breakout(bo) -> str:
     return (
         f"*IN PLAY — {bo.symbol}* broke {bo.breakout_level:.4g} on volume, "
