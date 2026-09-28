@@ -11,3 +11,4 @@ dashboard/.vercel
 .venv/
 HANDOFF.private.md
 data/test_store.json
+dashboard/tsconfig.tsbuildinfo
