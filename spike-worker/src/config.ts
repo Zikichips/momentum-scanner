@@ -2,7 +2,7 @@
 // Mirrors the spec in README.md; change a number here and the README together.
 
 export const RULES = {
-  universeSize: 300,              // top N USD spot pairs by 24h quote volume (Kraken ∪ Coinbase, dedup by base)
+  universeSize: 300,              // top N USD spot pairs by 24h quote volume (Kraken ∪ Coinbase, dedup by base -> busier exchange)
   minQuoteVolume24h: 1_000_000,   // skip pairs below this 24h quote volume (USD)
   windowMin: 30,                  // rolling window
   minMove: 0.15,                  // price_now / price_30min_ago − 1

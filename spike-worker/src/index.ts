@@ -18,6 +18,9 @@ export { SpikeState } from "./state";
 
 const KV_UNIVERSE = "universe";
 const KV_BASELINE = "baseline";
+// Put any value under this key (wrangler kv key put rebuild now ...) to start a universe +
+// baseline rebuild on the next scan tick. Scanning continues on the current universe meanwhile.
+const KV_REBUILD = "rebuild";
 
 const state = (env: Env) => env.SPIKE_STATE.get(env.SPIKE_STATE.idFromName("global"));
 
@@ -47,11 +50,18 @@ export default {
 
 // ------------------------------------------------------------------ scan (every minute)
 async function scan(env: Env, now: number) {
-  const [u, b] = await Promise.all([
+  const [u, b, rebuild] = await Promise.all([
     env.SPIKE_KV.get<{ entries: UniverseEntry[] }>(KV_UNIVERSE, "json"),
     env.SPIKE_KV.get<{ avg_daily_volume: Record<string, number> }>(KV_BASELINE, "json"),
+    env.SPIKE_KV.get(KV_REBUILD),
   ]);
   const st = state(env);
+  if (rebuild != null) {
+    const job = await st.getJob();
+    if (!job || job.phase === "done") await st.setJob({ phase: "kraken_pairs", startedAt: now });
+    await env.SPIKE_KV.delete(KV_REBUILD);
+    console.log("rebuild requested via KV");
+  }
   if (!u || !b) {
     // First run (or KV lost): build the universe before scanning.
     const job = await st.getJob();

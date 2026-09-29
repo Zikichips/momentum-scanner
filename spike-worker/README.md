@@ -14,7 +14,7 @@ Storage: **Durable Object (SQLite)** for the rolling window, cooldowns and rebui
 
 ## Rules
 
-- **Universe:** top 300 USD spot pairs by 24h quote volume, Kraken ∪ Coinbase, deduplicated by base symbol, Kraken preferred when both list it (ranked by that pair's own volume). Excludes stablecoins and fiat bases (USDT, USDC, DAI, TUSD, PYUSD, EUR, GBP, CAD, plus USD1, USDS, USDE, FDUSD, USDG, RLUSD, USDQ, EURC, EURQ, USDD). Coinbase `BASE-USDC` books are skipped because Coinbase shows them as USD. Rebuilt daily.
+- **Universe:** top 300 USD spot pairs by 24h quote volume, Kraken ∪ Coinbase, deduplicated by base symbol: when both exchanges list a coin, the one with the higher 24h quote volume is used for prices, candles, grading and the liquidity check (Kraken on a tie), and the coin is ranked by that volume. Excludes stablecoins and fiat bases (USDT, USDC, DAI, TUSD, PYUSD, EUR, GBP, CAD, plus USD1, USDS, USDE, FDUSD, USDG, RLUSD, USDQ, EURC, EURQ, USDD). Coinbase `BASE-USDC` books are skipped because Coinbase shows them as USD. Rebuilt daily.
 - **Minimum liquidity:** 24h quote volume ≥ $1M, else skipped.
 - **Spike:** all of
   - `price_now / price_30min_ago − 1 ≥ 0.15`
@@ -86,6 +86,7 @@ npx wrangler secret put SUPABASE_URL            # repeat for each secret above
 npx wrangler deploy
 curl https://spike-detector.<your-subdomain>.workers.dev/status   # universe/baseline/rebuild progress
 npx wrangler tail                                                 # live logs: one "scan …" line per minute
+npx wrangler kv key put rebuild now --binding SPIKE_KV --remote   # rebuild universe + baseline now (scanning continues)
 ```
 
 The first universe build starts on the first scan tick after deploy and takes about an hour. Scanning starts when it publishes, and spikes can fire 30 minutes after that, once the rolling window is full.

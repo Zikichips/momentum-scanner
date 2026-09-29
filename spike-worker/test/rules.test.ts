@@ -158,11 +158,16 @@ describe("exchange parsers", () => {
     const out = parseCoinbasePage({ products: [p("BTC-USDC"), p("QNT-USD"), p("USDT-USD"), p("OLD-USD", { trading_disabled: true })] });
     expect(out.map(e => e.id)).toEqual(["QNT-USD"]);
   });
-  it("dedupes by base preferring Kraken, then ranks by volume", () => {
-    const k = [{ base: "BTC", exchange: "kraken" as const, id: "XXBTZUSD", qvol24: 5 }];
+  it("dedupes by base keeping the busier exchange, then ranks by volume", () => {
+    const k = [{ base: "BTC", exchange: "kraken" as const, id: "XXBTZUSD", qvol24: 90 },
+               { base: "POND", exchange: "kraken" as const, id: "PONDUSD", qvol24: 0.3 },
+               { base: "ETH", exchange: "kraken" as const, id: "XETHZUSD", qvol24: 10 }];
     const c = [{ base: "BTC", exchange: "coinbase" as const, id: "BTC-USD", qvol24: 50 },
+               { base: "POND", exchange: "coinbase" as const, id: "POND-USD", qvol24: 1.2 },
+               { base: "ETH", exchange: "coinbase" as const, id: "ETH-USD", qvol24: 10 },
                { base: "QNT", exchange: "coinbase" as const, id: "QNT-USD", qvol24: 7 }];
-    expect(mergeUniverse(k, c, 300).map(e => `${e.exchange}:${e.base}`)).toEqual(["coinbase:QNT", "kraken:BTC"]);
+    expect(mergeUniverse(k, c, 300).map(e => `${e.exchange}:${e.base}`))
+      .toEqual(["kraken:BTC", "kraken:ETH", "coinbase:QNT", "coinbase:POND"]);   // ETH tie -> Kraken
     expect(mergeUniverse(k, c, 1)).toHaveLength(1);
   });
   it("parses candles from both exchanges into the same shape", () => {

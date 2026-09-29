@@ -55,14 +55,14 @@ export function parseCoinbasePage(json: any): UniverseEntry[] {
   return out;
 }
 
-/** Dedupe by base (Kraken preferred when both list it), rank by that pair's 24h quote volume, keep top n. */
+/** Dedupe by base, keeping the pair with the higher 24h quote volume (the busier exchange
+ *  gives the truer price, candles and liquidity check; Kraken wins ties). Rank by that
+ *  volume and keep the top n. */
 export function mergeUniverse(kraken: UniverseEntry[], coinbase: UniverseEntry[], n: number): UniverseEntry[] {
   const byBase = new Map<string, UniverseEntry>();
-  for (const e of coinbase) byBase.set(e.base, e);
-  for (const e of kraken) {
+  for (const e of [...kraken, ...coinbase]) {
     const prev = byBase.get(e.base);
-    // Several Kraken pairs can map to one base (rare); keep the most liquid Kraken one.
-    if (!prev || prev.exchange === "coinbase" || e.qvol24 > prev.qvol24) byBase.set(e.base, e);
+    if (!prev || e.qvol24 > prev.qvol24) byBase.set(e.base, e);
   }
   return [...byBase.values()].sort((a, b) => b.qvol24 - a.qvol24).slice(0, n);
 }
