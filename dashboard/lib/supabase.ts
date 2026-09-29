@@ -27,3 +27,18 @@ export type Journal = {
   entry: number | null; exit: number | null; size_usd: number | null; pnl_usd: number | null;
   pnl_pct: number | null; followed_rules: boolean | null; note: string | null;
 };
+
+export type SpikeAlert = {
+  id: string; symbol: string; exchange: "kraken" | "coinbase"; fired_at: string; price_at_alert: number;
+  move_30m: number | null; vol_multiple: number | null; liquidity_label: "thin" | "ok" | "liquid" | null;
+  vol_24h: number | null; has_news: boolean | null; news_headline: string | null;
+  ret_15: number | null; ret_30: number | null; ret_60: number | null; ret_240: number | null;
+  mfe_240: number | null; mae_240: number | null; hit_tp_first: boolean | null; hit_stop_first: boolean | null;
+  net_60: number | null; graded_complete: boolean;
+};
+export type SpikeScoreboardRow = {
+  day: string; segment: string; n: number;
+  mean_ret_15: number | null; median_ret_15: number | null; mean_ret_30: number | null; median_ret_30: number | null;
+  mean_ret_60: number | null; median_ret_60: number | null; mean_ret_240: number | null; median_ret_240: number | null;
+  mean_net_60: number | null; median_net_60: number | null; pct_tp_first: number | null; pct_stop_first: number | null;
+};

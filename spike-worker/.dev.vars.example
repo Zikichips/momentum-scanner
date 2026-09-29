@@ -1,0 +1,9 @@
+# Local secrets for `wrangler dev` (copy to .dev.vars, which is gitignored). All optional:
+# without Supabase, alerts are only logged and nothing is graded; without Telegram, messages are logged.
+SUPABASE_URL=
+SUPABASE_SERVICE_ROLE_KEY=
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
+CRYPTOPANIC_TOKEN=
+REDDIT_CLIENT_ID=
+REDDIT_CLIENT_SECRET=

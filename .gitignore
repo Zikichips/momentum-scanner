@@ -12,3 +12,6 @@ dashboard/.vercel
 HANDOFF.private.md
 data/test_store.json
 dashboard/tsconfig.tsbuildinfo
+spike-worker/node_modules/
+spike-worker/.wrangler/
+spike-worker/.dev.vars

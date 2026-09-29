@@ -150,3 +150,58 @@ create policy "anon read scoreboard" on scoreboard_daily for select to anon usin
 -- (Tighten to authenticated users once you add Supabase Auth to the dashboard.)
 create policy "anon write journal" on journal for insert to anon with check (true);
 create policy "anon update journal" on journal for update to anon using (true);
+
+-- ---------------------------------------------------------------- spike detector (spike-worker/)
+-- One row per spike alert. Detection and measurement only: size/stop/take_profit are suggestions.
+create table if not exists spike_alerts (
+  id               uuid primary key default gen_random_uuid(),
+  symbol           text not null,                 -- base symbol, e.g. QNT
+  exchange         text not null check (exchange in ('kraken','coinbase')),
+  pair_id          text not null,                 -- Kraken ticker key or Coinbase product_id (for grading)
+  fired_at         timestamptz not null,
+  price_at_alert   double precision not null,
+  price_30m_ago    double precision,
+  high_30m         double precision,
+  move_30m         double precision,              -- %
+  vol_multiple     double precision,              -- 30-min volume / (30-day avg daily volume / 48)
+  liquidity_label  text check (liquidity_label in ('thin','ok','liquid')),
+  vol_24h          double precision,              -- 24h quote volume, USD
+  has_news         boolean,                       -- null = CryptoPanic not configured / failed
+  news_headline    text,
+  reddit_ratio     double precision,
+  prior_spikes_90d int,
+  size_usd         double precision,
+  stop             double precision,
+  take_profit      double precision,
+  -- Filled by the grader (every 10 min until 240 min have elapsed). Returns in %.
+  ret_15 double precision, ret_30 double precision, ret_60 double precision, ret_240 double precision,
+  mfe_240 double precision, mae_240 double precision,
+  hit_tp_first     boolean,
+  hit_stop_first   boolean,
+  net_60           double precision,              -- ret_60 − 1.5 (costs)
+  graded_complete  boolean not null default false,
+  graded_at        timestamptz
+);
+create index if not exists spike_alerts_fired_idx on spike_alerts (fired_at desc);
+create index if not exists spike_alerts_symbol_idx on spike_alerts (symbol, fired_at desc);
+create index if not exists spike_alerts_ungraded_idx on spike_alerts (fired_at) where not graded_complete;
+
+-- Daily scoreboard, one row per segment: overall, liquidity:{thin,ok,liquid}, news:{yes,no,unknown}.
+create table if not exists spike_scoreboard (
+  day              date not null,
+  segment          text not null,
+  n                int,
+  mean_ret_15 double precision, median_ret_15 double precision,
+  mean_ret_30 double precision, median_ret_30 double precision,
+  mean_ret_60 double precision, median_ret_60 double precision,
+  mean_ret_240 double precision, median_ret_240 double precision,
+  mean_net_60 double precision, median_net_60 double precision,
+  pct_tp_first     double precision,
+  pct_stop_first   double precision,
+  primary key (day, segment)
+);
+
+alter table spike_alerts enable row level security;
+alter table spike_scoreboard enable row level security;
+create policy "anon read spike_alerts" on spike_alerts for select to anon using (true);
+create policy "anon read spike_scoreboard" on spike_scoreboard for select to anon using (true);

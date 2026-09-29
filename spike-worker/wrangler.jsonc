@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "spike-detector",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "triggers": { "crons": ["* * * * *", "*/10 * * * *", "0 4 * * *"] },
+  // Create with: npx wrangler kv namespace create SPIKE_KV  (then paste the id here)
+  "kv_namespaces": [{ "binding": "SPIKE_KV", "id": "REPLACE_WITH_KV_NAMESPACE_ID" }],
+  "durable_objects": { "bindings": [{ "name": "SPIKE_STATE", "class_name": "SpikeState" }] },
+  // SQLite-backed Durable Objects are the ones available on the Workers Free plan.
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SpikeState"] }],
+  "vars": {
+    // Suggested size only (same rule as the Python scanner's position_size); nothing is traded.
+    "CAPITAL_USD": "1000",
+    "RISK_PCT": "5",
+    "MAX_POSITION_PCT": "50",
+    "CRYPTOPANIC_URL": "https://cryptopanic.com/api/v1/posts/"
+  },
+  "observability": { "enabled": true }
+  // Secrets (npx wrangler secret put NAME): SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
+  // TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, CRYPTOPANIC_TOKEN, REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET
+}

@@ -67,4 +67,8 @@ python -m scanner.digest
 
 Breakout-pullback systems in the literature run 35–45% win rates at ~2:1 reward/risk — a thin edge before fees and slippage. The scoreboard exists to tell you whether *this* configuration has one. Don't trade real money until the backtest and 30+ forward-graded alerts agree it does.
 
+## Spike detector
+
+`spike-worker/` is a separate Cloudflare Worker (TypeScript, free plan). It alerts on ≥ 15% / 30-minute spikes on ≥ 5× volume across the top 300 Kraken + Coinbase USD pairs, and grades every alert on the path that follows. It does measurement only, with no trading logic. See `spike-worker/README.md`.
+
 See `HANDOFF.md` for deployment and next steps.
