@@ -15,16 +15,20 @@ Storage: **Durable Object (SQLite)** for the rolling window, cooldowns and rebui
 ## Rules
 
 - **Universe:** top 300 USD spot pairs by 24h quote volume, Kraken ∪ Coinbase, deduplicated by base symbol: when both exchanges list a coin, the one with the higher 24h quote volume is used for prices, candles, grading and the liquidity check (Kraken on a tie), and the coin is ranked by that volume. Excludes stablecoins and fiat bases (USDT, USDC, DAI, TUSD, PYUSD, EUR, GBP, CAD, plus USD1, USDS, USDE, FDUSD, USDG, RLUSD, USDQ, EURC, EURQ, USDD). Coinbase `BASE-USDC` books are skipped because Coinbase shows them as USD. Rebuilt daily.
-- **Minimum liquidity:** 24h quote volume ≥ $1M, else skipped.
+- **Minimum liquidity:** 24h quote volume ≥ $1M to alert. Below that the coin is **micro**, and its spikes go to shadow mode (below).
 - **Spike:** all of
   - `price_now / price_30min_ago − 1 ≥ 0.15`
   - `volume_last_30min ≥ 5 × (30-day average daily volume / 48)`
   - `price_now ≥ 0.97 × high_last_30min`
 - **Cooldown:** one alert per base symbol per 4 hours.
-- **Liquidity label:** thin < $2M · ok $2–20M · liquid > $20M (24h quote volume).
+- **Liquidity label:** micro < $1M (shadow only) · thin < $2M · ok $2–20M · liquid > $20M (24h quote volume).
 - **Suggested levels:** size = `position_size()` from the Python scanner (5% of `CAPITAL_USD` at risk, capped at 50%); stop = `max(price_30min_ago, price_now × 0.87)`; TP = `price_now + 1.5 × (price_now − stop)`.
 - **Grading:** close-to-alert returns at +15/30/60/240 min; MFE/MAE within 240 min; which level was touched first (if one 1-minute bar touches both, the stop counts first); `net_60 = ret_60 − 1.5`.
+- **Cost per alert:** `cost_pct` = the spread at alert time (from the same per-minute quotes) + 2 × the exchange's lowest-tier taker fee (Kraken 0.40%, Coinbase 1.20%, in `src/config.ts`; check the current fee schedules). `net_60_real = ret_60 − cost_pct`, alongside the spec's flat `net_60 = ret_60 − 1.5`. Slippage beyond the top of the book isn't modelled, which flatters thin coins.
+- **Shadow mode (micro coins):** spikes that pass the three rules on coins under $1M/day are stored (`shadow = true`, `liquidity_label = micro`) and graded exactly like alerts, but no Telegram message is sent and there are no news or Reddit calls. The point is to find out whether thin-coin spikes pay after real costs. Liquid coins get the candle budget first each minute; micro coins get up to 4 checks and 3 shadow alerts per minute.
 - **Scoreboard (daily):** count, mean and median of each return and `net_60`, % TP first, % stop first. Given overall, by liquidity label, and by news (`yes` / `no` / `unknown` when CryptoPanic isn't configured).
+
+The overall, liquidity and news segments cover alerts that were sent; `liquidity:micro` covers the shadow alerts.
 
 All thresholds live in `src/config.ts`.
 
@@ -43,7 +47,7 @@ These are the Workers Free limits as understood at build time. Check them agains
 |---|---|---|
 | Worker invocations | 1/min scan + 0.1/min grade + 1/day ≈ **1,585/day** | 100,000/day |
 | External subrequests, scan (steady state) | **2** (Kraken Ticker + Coinbase products) | 50 per invocation |
-| External subrequests, scan (worst case) | 2 + 8 candidate candle fetches + 3 alerts × 8 (hourly candles, CryptoPanic, Reddit ×3, prior spikes, Supabase insert, Telegram) + 6 baseline fetches (04:00–05:00 only) = **40** | 50 per invocation |
+| External subrequests, scan (worst case) | 2 + 8 candidate candle fetches + 3 alerts × 8 (hourly candles, CryptoPanic, Reddit ×3, prior spikes, Supabase insert, Telegram) + 4 micro candle fetches + 3 shadow inserts + 5 baseline fetches (during a rebuild) = **46** | 50 per invocation |
 | External subrequests, grade | 1 + 20 × (candles + update) = **≤ 41** | 50 per invocation |
 | Exchange APIs | Kraken 1–15 calls/min, Coinbase 1–15 calls/min | Kraken public ≈ 1/s; Coinbase public 10/s |
 | KV | 2 reads/min (**2,880/day**); **2 writes/day** | 100,000 reads, 1,000 writes/day |
@@ -61,7 +65,7 @@ These are the Workers Free limits as understood at build time. Check them agains
 | Daily: Kraken Ticker, all pairs | 417 KB | 2.69 ms |
 | Daily: one Coinbase products page | 318 KB (250 products; 4 pages) | 0.66 ms |
 
-Each daily step parses at most one of these payloads per invocation. The rebuild therefore runs as a job across the scan ticks after 04:00 UTC: 1 step for AssetPairs, 1 for the ticker, 4 Coinbase pages, 50 steps of 6 daily-candle fetches (one at a time; symbols that fail, e.g. Coinbase 429s on Cloudflare's shared IPs, get one retry pass), then publish. Publishing sends a short Telegram heartbeat. That's about 56 minutes, and the previous universe keeps scanning in the meantime. Cloudflare's servers may be slower than this Mac. After deploying, confirm the real numbers under **Workers → spike-detector → Metrics → CPU time** (look at p99). The bench fails if any step exceeds 5 ms, which leaves 2× headroom.
+Each daily step parses at most one of these payloads per invocation. The rebuild therefore runs as a job across the scan ticks after 04:00 UTC: 1 step for AssetPairs, 1 for the ticker, 4 Coinbase pages, 60 steps of 5 daily-candle fetches (one at a time; symbols that fail, e.g. Coinbase 429s on Cloudflare's shared IPs, get one retry pass), then publish, which sends a short Telegram heartbeat. That's about 65 minutes, and the previous universe keeps scanning in the meantime. Cloudflare's servers may be slower than this Mac. After deploying, confirm the real numbers under **Workers → spike-detector → Metrics → CPU time** (look at p99). The bench fails if any step exceeds 5 ms, which leaves 2× headroom.
 
 ## Setup
 

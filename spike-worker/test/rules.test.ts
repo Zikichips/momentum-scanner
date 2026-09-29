@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  evaluateSpike, formatAlert, gradePath, levels, liquidityLabel, positionSize, scoreboard, type Candle,
+  evaluateSpike, formatAlert, gradePath, levels, liquidityLabel, positionSize, scoreboard, tradeCost, type Candle,
 } from "../src/rules";
 import {
   mergeUniverse, parseCoinbaseCandles, parseCoinbasePage, parseKrakenOhlc, parseKrakenPairs, parseKrakenTicker,
@@ -57,7 +57,17 @@ describe("levels and sizing", () => {
     expect(positionSize(100, 100, 1000, 5, 50)).toBe(0);
   });
   it("labels liquidity", () => {
-    expect([liquidityLabel(1.5e6), liquidityLabel(5e6), liquidityLabel(3e7)]).toEqual(["thin", "ok", "liquid"]);
+    expect([liquidityLabel(4e5), liquidityLabel(1.5e6), liquidityLabel(5e6), liquidityLabel(3e7)])
+      .toEqual(["micro", "thin", "ok", "liquid"]);
+  });
+  it("estimates round-trip cost from the spread and taker fees", () => {
+    // POND on Kraken, 2026-09-29: bid 0.002076 / ask 0.002112 -> 1.72% spread + 2 × 0.40%
+    const k = tradeCost(0.002076, 0.002112, "kraken");
+    expect(k.spreadPct).toBeCloseTo(1.719, 2);
+    expect(k.costPct).toBeCloseTo(2.519, 2);
+    expect(tradeCost(100, 100.1, "coinbase").costPct).toBeCloseTo(2.5, 2);   // 0.1% + 2 × 1.20%
+    expect(tradeCost(NaN, NaN, "coinbase")).toEqual({ spreadPct: null, costPct: 1.5 });   // no book -> flat cost
+    expect(tradeCost(101, 100, "kraken").spreadPct).toBeNull();                          // crossed book
   });
 });
 
@@ -96,10 +106,11 @@ describe("gradePath", () => {
     closes.map((c, i) => ({ t: fired + i * MIN, open: c, high: c + hi, low: c - lo, close: c, volume: 1 }));
 
   it("fills horizons that have elapsed and leaves the rest", () => {
-    const p = gradePath({ firedAt: fired, price: 100, stop: 90, takeProfit: 115 }, bars(Array(61).fill(101)), fired + 61 * MIN);
+    const p = gradePath({ firedAt: fired, price: 100, stop: 90, takeProfit: 115, costPct: 2.5 }, bars(Array(61).fill(101)), fired + 61 * MIN);
     expect(p.ret_15).toBeCloseTo(1, 6);
     expect(p.ret_60).toBeCloseTo(1, 6);
     expect(p.net_60).toBeCloseTo(-0.5, 6);
+    expect(p.net_60_real).toBeCloseTo(-1.5, 6);
     expect(p.ret_240).toBeUndefined();
     expect(p.graded_complete).toBe(false);
     expect(p.hit_tp_first).toBeUndefined();              // undecided until a level is hit or 240 min pass
@@ -126,14 +137,17 @@ describe("scoreboard", () => {
     const row = (liquidity_label: any, has_news: boolean | null, ret_60: number, tp: boolean) => ({
       liquidity_label, has_news, ret_15: 1, ret_30: 1, ret_60, ret_240: 1, net_60: ret_60 - 1.5, hit_tp_first: tp, hit_stop_first: !tp,
     });
-    const s = scoreboard("2026-09-28", [row("thin", true, 4, true), row("liquid", false, -2, false), row("liquid", null, 0, false)]);
+    const shadowRow = { ...row("micro", null, 9, true), shadow: true, net_60_real: 6 };
+    const s = scoreboard("2026-09-28", [row("thin", true, 4, true), row("liquid", false, -2, false), row("liquid", null, 0, false), shadowRow]);
     const by = Object.fromEntries(s.map(r => [r.segment, r]));
     expect(by.overall.n).toBe(3);
     expect(by.overall.median_ret_60).toBe(0);
     expect(by.overall.pct_tp_first).toBeCloseTo(33.3, 1);
     expect(by["liquidity:liquid"].n).toBe(2);
     expect(by["liquidity:ok"].n).toBe(0);
-    expect([by["news:yes"].n, by["news:no"].n, by["news:unknown"].n]).toEqual([1, 1, 1]);
+    expect([by["news:yes"].n, by["news:no"].n, by["news:unknown"].n]).toEqual([1, 1, 1]);   // shadow excluded
+    expect(by["liquidity:micro"].n).toBe(1);
+    expect(by["liquidity:micro"].mean_net_60_real).toBe(6);
   });
 });
 
@@ -148,9 +162,9 @@ describe("exchange parsers", () => {
       QNTUSD: { wsname: "QNT/USD", quote: "ZUSD", status: "cancel_only" },
     } });
     expect(pairs).toEqual({ XXBTZUSD: "BTC", XDGUSD: "DOGE" });
-    const t = { result: { XXBTZUSD: { c: ["100", "1"], v: ["1", "10"], p: ["99", "100"] } } };
+    const t = { result: { XXBTZUSD: { c: ["100", "1"], v: ["1", "10"], p: ["99", "100"], b: ["99.9", "1", "1"], a: ["100.1", "1", "1"] } } };
     expect(parseKrakenTickerAll(t, pairs)).toEqual([{ base: "BTC", exchange: "kraken", id: "XXBTZUSD", qvol24: 1000 }]);
-    expect(parseKrakenTicker(t, pairs)).toEqual({ BTC: { price: 100, qvol24: 1000 } });
+    expect(parseKrakenTicker(t, pairs)).toEqual({ BTC: { price: 100, qvol24: 1000, bid: 99.9, ask: 100.1 } });
   });
   it("keeps only BASE-USD Coinbase spot books", () => {
     const p = (id: string, extra = {}) => ({ product_id: id, product_type: "SPOT", status: "online", base_display_symbol: id.split("-")[0],

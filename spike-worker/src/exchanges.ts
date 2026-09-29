@@ -16,7 +16,7 @@ async function getJson(url: string): Promise<any> {
 const KRAKEN_ALIASES: Record<string, string> = { XBT: "BTC", XDG: "DOGE" };
 export const normBase = (b: string) => KRAKEN_ALIASES[b] ?? b;
 
-export interface Quote { price: number; qvol24: number }
+export interface Quote { price: number; qvol24: number; bid: number; ask: number }
 export interface UniverseEntry { base: string; exchange: Exchange; id: string; qvol24: number }
 
 // ------------------------------------------------------------------ universe (daily, one payload per step)
@@ -80,7 +80,8 @@ export function parseKrakenTicker(json: any, keyToBase: Record<string, string>):
   const out: Record<string, Quote> = {};
   for (const [key, t] of Object.entries<any>(json.result ?? {})) {
     const base = keyToBase[key];
-    if (base) out[base] = { price: parseFloat(t.c[0]), qvol24: parseFloat(t.v[1]) * parseFloat(t.p[1]) };
+    if (base) out[base] = { price: parseFloat(t.c[0]), qvol24: parseFloat(t.v[1]) * parseFloat(t.p[1]),
+                            bid: parseFloat(t.b[0]), ask: parseFloat(t.a[0]) };
   }
   return out;
 }
@@ -89,7 +90,8 @@ export function parseCoinbaseProducts(json: any): Record<string, Quote> {
   const out: Record<string, Quote> = {};
   for (const p of json.products ?? []) {
     const base = String(p.product_id).split("-")[0];
-    out[base] = { price: parseFloat(p.price), qvol24: parseFloat(p.approximate_quote_24h_volume || "0") };
+    out[base] = { price: parseFloat(p.price), qvol24: parseFloat(p.approximate_quote_24h_volume || "0"),
+                  bid: parseFloat(p.best_bid_price || "NaN"), ask: parseFloat(p.best_ask_price || "NaN") };
   }
   return out;
 }

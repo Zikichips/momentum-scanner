@@ -3,7 +3,7 @@
 
 export const RULES = {
   universeSize: 300,              // top N USD spot pairs by 24h quote volume (Kraken ∪ Coinbase, dedup by base -> busier exchange)
-  minQuoteVolume24h: 1_000_000,   // skip pairs below this 24h quote volume (USD)
+  minQuoteVolume24h: 1_000_000,   // below this 24h quote volume (USD): "micro" -> shadow alerts only (graded, not sent)
   windowMin: 30,                  // rolling window
   minMove: 0.15,                  // price_now / price_30min_ago − 1
   prefilterMove: 0.13,            // cheap check on minute snapshots before fetching candles
@@ -14,7 +14,7 @@ export const RULES = {
   tpMultiple: 1.5,                // take_profit = price_now + this × (price_now − stop)
   costsPct: 1.5,                  // net_60 = ret_60 − this (percentage points)
   gradeHorizonsMin: [15, 30, 60, 240] as const,
-  liquidity: { thin: 2_000_000, liquid: 20_000_000 },   // thin < $2M, ok $2–20M, liquid > $20M
+  liquidity: { thin: 2_000_000, liquid: 20_000_000 },   // micro < $1M (shadow), thin < $2M, ok $2–20M, liquid > $20M
   baselineDays: 30,
   minBaselineDays: 20,            // fewer complete daily bars than this (new listing) -> no baseline, no alert
 };
@@ -26,11 +26,17 @@ export const EXCLUDE_BASES = new Set([
   "USD1", "USDS", "USDE", "FDUSD", "USDG", "RLUSD", "USDQ", "EURC", "EURQ", "USDD",
 ]);
 
+// Round-trip cost estimate per alert: spread at alert time + 2 × taker fee. Lowest-tier taker
+// fees as understood at build time; check the exchanges' current fee schedules.
+export const TAKER_FEE_PCT: Record<"kraken" | "coinbase", number> = { kraken: 0.40, coinbase: 1.20 };
+
 // Per-invocation budgets, sized to stay under the Workers Free limit of 50 external subrequests.
 export const BUDGET = {
-  maxCandidatesPerScan: 8,        // 1-min candle fetches to confirm a spike
+  maxCandidatesPerScan: 8,        // 1-min candle fetches to confirm a spike (coins >= $1M; checked first)
   maxAlertsPerScan: 3,            // each alert costs up to 8 subrequests (enrichment + store + Telegram)
-  baselineFetchesPerTick: 6,      // daily-candle fetches per scan tick while the baseline job runs
+  maxMicroCandidatesPerScan: 4,   // extra candle fetches for micro coins (shadow mode)
+  maxShadowPerScan: 3,            // each shadow alert costs 1 subrequest (store only)
+  baselineFetchesPerTick: 5,      // daily-candle fetches per scan tick while the baseline job runs
   maxGradesPerRun: 20,            // each grade = 1 candle fetch + 1 Supabase update
 };
 

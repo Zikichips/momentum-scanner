@@ -1,11 +1,11 @@
 // Pure functions: spike condition, suggested levels, message, grading, scoreboard.
 // No I/O, so they are unit-tested directly (test/rules.test.ts).
-import { RULES } from "./config";
+import { RULES, TAKER_FEE_PCT } from "./config";
 
 export interface Candle { t: number; open: number; high: number; low: number; close: number; volume: number } // t = start, ms
 
 export type Exchange = "kraken" | "coinbase";
-export type Liquidity = "thin" | "ok" | "liquid";
+export type Liquidity = "micro" | "thin" | "ok" | "liquid";
 
 export interface SpikeCheck {
   ok: boolean;
@@ -40,6 +40,7 @@ export function evaluateSpike(candles: Candle[], priceNow: number, avgDailyVolum
 }
 
 export function liquidityLabel(quoteVolume24h: number): Liquidity {
+  if (quoteVolume24h < RULES.minQuoteVolume24h) return "micro";
   if (quoteVolume24h < RULES.liquidity.thin) return "thin";
   if (quoteVolume24h > RULES.liquidity.liquid) return "liquid";
   return "ok";
@@ -51,6 +52,15 @@ export function positionSize(entry: number, stop: number, capital: number, riskP
   if (!(perUnitRisk > 0)) return 0;
   const size = (capital * riskPct / 100) / perUnitRisk;
   return Math.round(Math.min(size, capital * maxPositionPct / 100) * 100) / 100;
+}
+
+/** Spread (% of mid) and round-trip cost estimate: spread + 2 × taker fee. Null spread if the
+ *  book is missing or crossed; cost then falls back to the flat RULES.costsPct. */
+export function tradeCost(bid: number, ask: number, exchange: Exchange): { spreadPct: number | null; costPct: number } {
+  const ok = bid > 0 && ask >= bid;
+  const spreadPct = ok ? Math.round((ask - bid) / ((ask + bid) / 2) * 100 * 1000) / 1000 : null;
+  const costPct = spreadPct == null ? RULES.costsPct : Math.round((spreadPct + 2 * TAKER_FEE_PCT[exchange]) * 1000) / 1000;
+  return { spreadPct, costPct };
 }
 
 export interface Levels { stop: number; takeProfit: number; stopPct: number; tpPct: number }
@@ -104,12 +114,12 @@ export function formatAlert(a: AlertView): string {
 }
 
 // ------------------------------------------------------------------ grading
-export interface GradeInput { firedAt: number; price: number; stop: number; takeProfit: number }
+export interface GradeInput { firedAt: number; price: number; stop: number; takeProfit: number; costPct?: number | null }
 export interface GradePatch {
   ret_15?: number; ret_30?: number; ret_60?: number; ret_240?: number;
   mfe_240?: number; mae_240?: number;
   hit_tp_first?: boolean; hit_stop_first?: boolean;
-  net_60?: number; graded_complete: boolean;
+  net_60?: number; net_60_real?: number; graded_complete: boolean;
 }
 
 const pct = (x: number, base: number) => Math.round((x / base - 1) * 100 * 1000) / 1000;
@@ -128,7 +138,10 @@ export function gradePath(a: GradeInput, candles: Candle[], now: number): GradeP
     const upto = bars.filter(c => c.t + 60_000 <= end + 1);
     if (upto.length) (patch as any)[`ret_${h}`] = pct(upto[upto.length - 1].close, a.price);
   }
-  if (patch.ret_60 != null) patch.net_60 = Math.round((patch.ret_60 - RULES.costsPct) * 1000) / 1000;
+  if (patch.ret_60 != null) {
+    patch.net_60 = Math.round((patch.ret_60 - RULES.costsPct) * 1000) / 1000;
+    if (a.costPct != null) patch.net_60_real = Math.round((patch.ret_60 - a.costPct) * 1000) / 1000;
+  }
 
   if (bars.length) {
     patch.mfe_240 = pct(Math.max(...bars.map(c => c.high)), a.price);
@@ -149,8 +162,9 @@ export function gradePath(a: GradeInput, candles: Candle[], now: number): GradeP
 
 // ------------------------------------------------------------------ scoreboard
 export interface GradedRow {
-  liquidity_label: Liquidity; has_news: boolean | null;
+  liquidity_label: Liquidity; has_news: boolean | null; shadow?: boolean | null;
   ret_15: number | null; ret_30: number | null; ret_60: number | null; ret_240: number | null; net_60: number | null;
+  net_60_real?: number | null;
   hit_tp_first: boolean | null; hit_stop_first: boolean | null;
 }
 
@@ -163,7 +177,7 @@ const median = (xs: number[]) => {
 
 export function segmentStats(rows: GradedRow[]) {
   const out: Record<string, number | null> = { n: rows.length };
-  for (const k of ["ret_15", "ret_30", "ret_60", "ret_240", "net_60"] as const) {
+  for (const k of ["ret_15", "ret_30", "ret_60", "ret_240", "net_60", "net_60_real"] as const) {
     const xs = rows.map(r => r[k]).filter((x): x is number => x != null);
     out[`mean_${k}`] = mean(xs);
     out[`median_${k}`] = median(xs);
@@ -175,14 +189,17 @@ export function segmentStats(rows: GradedRow[]) {
 
 export interface ScoreRow { day: string; segment: string; [stat: string]: string | number | null }
 
-/** One row per segment: overall, liquidity:{thin,ok,liquid}, news:{yes,no,unknown}. */
+/** One row per segment. overall, liquidity:{thin,ok,liquid} and news:{yes,no,unknown} cover the
+ *  alerts actually sent; liquidity:micro covers the shadow alerts (graded, never sent). */
 export function scoreboard(day: string, rows: GradedRow[]): ScoreRow[] {
+  const live = rows.filter(r => !r.shadow);
   const segs: [string, GradedRow[]][] = [
-    ["overall", rows],
-    ...(["thin", "ok", "liquid"] as const).map(l => [`liquidity:${l}`, rows.filter(r => r.liquidity_label === l)] as [string, GradedRow[]]),
-    ["news:yes", rows.filter(r => r.has_news === true)],
-    ["news:no", rows.filter(r => r.has_news === false)],
-    ["news:unknown", rows.filter(r => r.has_news == null)],   // CryptoPanic not configured or failed
+    ["overall", live],
+    ...(["thin", "ok", "liquid"] as const).map(l => [`liquidity:${l}`, live.filter(r => r.liquidity_label === l)] as [string, GradedRow[]]),
+    ["news:yes", live.filter(r => r.has_news === true)],
+    ["news:no", live.filter(r => r.has_news === false)],
+    ["news:unknown", live.filter(r => r.has_news == null)],   // CryptoPanic not configured or failed
+    ["liquidity:micro", rows.filter(r => r.shadow)],
   ];
   return segs.map(([segment, rs]) => ({ day, segment, ...segmentStats(rs) }));
 }

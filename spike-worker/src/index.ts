@@ -8,9 +8,11 @@ import { BUDGET, RULES } from "./config";
 import type { Env } from "./config";
 import {
   COINBASE_PAGE, fetchCandles, fetchCoinbasePage, fetchKrakenPairs, fetchKrakenTickerAll, fetchQuotes, mergeUniverse,
-  type UniverseEntry,
+  type Quote, type UniverseEntry,
 } from "./exchanges";
-import { evaluateSpike, formatAlert, gradePath, levels, liquidityLabel, positionSize, scoreboard, type GradedRow } from "./rules";
+import {
+  evaluateSpike, formatAlert, gradePath, levels, liquidityLabel, positionSize, scoreboard, tradeCost, type GradedRow,
+} from "./rules";
 import { hasSupabase, newsHeadline, priorSpikes, redditMentions, sb, telegram } from "./services";
 import type { Job } from "./state";
 
@@ -78,24 +80,28 @@ async function scan(env: Env, now: number) {
 
   if (ago) {
     const byBase = new Map(u.entries.map(e => [e.base, e]));
-    const candidates = Object.entries(quotes)
-      .filter(([base, q]) => q.qvol24 >= RULES.minQuoteVolume24h && ago[base] > 0 && !cooldown[base]
+    const moved = Object.entries(quotes)
+      .filter(([base, q]) => ago[base] > 0 && !cooldown[base] && b.avg_daily_volume[base] > 0
                               && q.price / ago[base] - 1 >= RULES.prefilterMove)
-      .sort((x, y) => y[1].price / ago[y[0]] - x[1].price / ago[x[0]])
-      .slice(0, BUDGET.maxCandidatesPerScan);
+      .sort((x, y) => y[1].price / ago[y[0]] - x[1].price / ago[x[0]]);
+    // Coins >= $1M get the candle budget first and send alerts. Micro coins (< $1M) are
+    // checked with what's left and only recorded as shadow alerts: graded, never sent.
+    const liquid = moved.filter(([, q]) => q.qvol24 >= RULES.minQuoteVolume24h).slice(0, BUDGET.maxCandidatesPerScan);
+    const micro = moved.filter(([, q]) => q.qvol24 < RULES.minQuoteVolume24h).slice(0, BUDGET.maxMicroCandidatesPerScan);
 
-    let alerts = 0;
-    for (const [base, q] of candidates) {
-      if (alerts >= BUDGET.maxAlertsPerScan) break;
+    let alerts = 0, shadows = 0;
+    for (const [base, q] of [...liquid, ...micro]) {
+      const shadow = q.qvol24 < RULES.minQuoteVolume24h;
+      if (shadow ? shadows >= BUDGET.maxShadowPerScan : alerts >= BUDGET.maxAlertsPerScan) continue;
       const e = byBase.get(base)!;
       try {
         const candles = await fetchCandles(e, 1, now - (RULES.windowMin + 1) * 60_000);
         const chk = evaluateSpike(candles, q.price, b.avg_daily_volume[base], now);
-        console.log(`candidate ${base} ${e.exchange}: ${chk.ok ? "SPIKE" : chk.reasons.join(", ")}`);
+        console.log(`candidate ${base} ${e.exchange}${shadow ? " (micro)" : ""}: ${chk.ok ? "SPIKE" : chk.reasons.join(", ")}`);
         if (!chk.ok) continue;
-        await fireAlert(env, e, q, chk, now);
+        if (shadow) { await shadowAlert(env, e, q, chk, now); shadows++; }
+        else { await fireAlert(env, e, q, chk, now); alerts++; }
         await st.markAlert(base, now);
-        alerts++;
       } catch (err) {
         console.log(`candidate ${base}: ${err}`);
       }
@@ -105,8 +111,27 @@ async function scan(env: Env, now: number) {
   await baselineStep(env, now);   // no-op unless the daily rebuild is running
 }
 
-async function fireAlert(env: Env, e: UniverseEntry, q: { price: number; qvol24: number },
-                         chk: ReturnType<typeof evaluateSpike>, now: number) {
+/** Micro coin (< $1M/day) spike: stored and graded like an alert, but no Telegram message
+ *  and no enrichment calls. Measures whether thin-coin spikes pay after real costs. */
+async function shadowAlert(env: Env, e: UniverseEntry, q: Quote, chk: ReturnType<typeof evaluateSpike>, now: number) {
+  const lv = levels(q.price, chk.priceAgo);
+  const { spreadPct, costPct } = tradeCost(q.bid, q.ask, e.exchange);
+  const row = {
+    symbol: e.base, exchange: e.exchange, pair_id: e.id, fired_at: new Date(now).toISOString(), shadow: true,
+    price_at_alert: q.price, price_30m_ago: chk.priceAgo, high_30m: chk.high,
+    move_30m: Math.round(chk.move * 100_000) / 1000, vol_multiple: Math.round(chk.volMultiple * 100) / 100,
+    liquidity_label: "micro", vol_24h: Math.round(q.qvol24), spread_pct: spreadPct, cost_pct: costPct,
+    size_usd: positionSize(q.price, lv.stop, +env.CAPITAL_USD, +env.RISK_PCT, +env.MAX_POSITION_PCT),
+    stop: lv.stop, take_profit: lv.takeProfit,
+  };
+  if (hasSupabase(env)) {
+    await sb(env, "spike_alerts", { method: "POST", body: JSON.stringify(row), headers: { Prefer: "return=minimal" } })
+      .catch(err => console.log("store shadow alert failed:", String(err)));
+  }
+  console.log(`shadow alert ${e.base} ${e.exchange}: +${row.move_30m}% vol ${row.vol_multiple}x, spread ${spreadPct}%`);
+}
+
+async function fireAlert(env: Env, e: UniverseEntry, q: Quote, chk: ReturnType<typeof evaluateSpike>, now: number) {
   const lv = levels(q.price, chk.priceAgo);
   const size = positionSize(q.price, lv.stop, +env.CAPITAL_USD, +env.RISK_PCT, +env.MAX_POSITION_PCT);
   const [hourly, news, reddit, prior] = await Promise.all([
@@ -137,6 +162,7 @@ async function fireAlert(env: Env, e: UniverseEntry, q: { price: number; qvol24:
     has_news: news.checked ? news.headline != null : null, news_headline: news.headline,
     reddit_ratio: reddit && reddit.avg7d > 0 ? Math.round(reddit.m24 / reddit.avg7d * 100) / 100 : null,
     prior_spikes_90d: prior.n, size_usd: size, stop: lv.stop, take_profit: lv.takeProfit,
+    shadow: false, ...(({ spreadPct, costPct }) => ({ spread_pct: spreadPct, cost_pct: costPct }))(tradeCost(q.bid, q.ask, e.exchange)),
   };
   if (hasSupabase(env)) {
     await sb(env, "spike_alerts", { method: "POST", body: JSON.stringify(row), headers: { Prefer: "return=minimal" } })
@@ -153,12 +179,13 @@ async function grade(env: Env, now: number) {
   const ready = new Date(now - 15 * 60_000).toISOString();
   const rows: any[] = await sb(env,
     `spike_alerts?graded_complete=eq.false&fired_at=lt.${ready}&order=fired_at.asc&limit=${BUDGET.maxGradesPerRun}` +
-    `&select=id,exchange,pair_id,fired_at,price_at_alert,stop,take_profit`);
+    `&select=id,exchange,pair_id,fired_at,price_at_alert,stop,take_profit,cost_pct`);
   for (const r of rows) {
     try {
       const firedAt = Date.parse(r.fired_at);
       const candles = await fetchCandles({ exchange: r.exchange, id: r.pair_id }, 1, firedAt);
-      const patch = gradePath({ firedAt, price: r.price_at_alert, stop: r.stop, takeProfit: r.take_profit }, candles, now);
+      const patch = gradePath({ firedAt, price: r.price_at_alert, stop: r.stop, takeProfit: r.take_profit, costPct: r.cost_pct },
+                              candles, now);
       await sb(env, `spike_alerts?id=eq.${r.id}`, {
         method: "PATCH", body: JSON.stringify({ ...patch, graded_at: new Date(now).toISOString() }),
         headers: { Prefer: "return=minimal" },
@@ -176,7 +203,7 @@ async function baselineCron(env: Env, now: number) {
   await baselineStep(env, now);
   if (hasSupabase(env)) {
     const rows: GradedRow[] = await sb(env,
-      "spike_alerts?graded_complete=eq.true&select=liquidity_label,has_news,ret_15,ret_30,ret_60,ret_240,net_60,hit_tp_first,hit_stop_first");
+      "spike_alerts?graded_complete=eq.true&select=liquidity_label,has_news,shadow,ret_15,ret_30,ret_60,ret_240,net_60,net_60_real,hit_tp_first,hit_stop_first");
     const day = new Date(now).toISOString().slice(0, 10);
     await sb(env, "spike_scoreboard?on_conflict=day,segment", {
       method: "POST", body: JSON.stringify(scoreboard(day, rows)),
