@@ -1,4 +1,5 @@
 import { supabase, type Alert } from "@/lib/supabase";
+import { fmtDateTime } from "@/lib/time";
 
 export const revalidate = 60;
 
@@ -22,7 +23,7 @@ export default async function AlertsPage() {
           <tbody>
             {alerts.map(a => (
               <tr key={a.id}>
-                <td>{new Date(a.fired_at).toLocaleString()}</td>
+                <td>{fmtDateTime(a.fired_at)}</td>
                 <td><strong>{a.symbol}</strong></td>
                 <td>{a.entry_type ?? "pullback"}</td>
                 <td>{num(a.entry)}</td><td>{num(a.stop)}</td><td>{num(a.target1)}</td><td>{num(a.target2)}</td>

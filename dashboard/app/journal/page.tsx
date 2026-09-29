@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { supabase, type Journal } from "@/lib/supabase";
+import { fmtDate } from "@/lib/time";
 
 export default function JournalPage() {
   const [rows, setRows] = useState<Journal[]>([]);
@@ -56,7 +57,7 @@ export default function JournalPage() {
           <tbody>
             {rows.map(r => (
               <tr key={r.id}>
-                <td>{new Date(r.opened_at).toLocaleDateString()}</td><td><strong>{r.symbol}</strong></td>
+                <td>{fmtDate(r.opened_at)}</td><td><strong>{r.symbol}</strong></td>
                 <td>{r.entry ?? "–"}</td><td>{r.exit ?? <span className="muted">open</span>}</td><td>${r.size_usd?.toFixed(0)}</td>
                 <td className={(r.pnl_usd ?? 0) >= 0 ? "up" : "down"}>{r.pnl_usd == null ? "–" : `$${r.pnl_usd.toFixed(0)}`}</td>
                 <td className={(r.pnl_pct ?? 0) >= 0 ? "up" : "down"}>{r.pnl_pct == null ? "–" : `${r.pnl_pct.toFixed(1)}%`}</td>
