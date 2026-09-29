@@ -61,7 +61,7 @@ These are the Workers Free limits as understood at build time. Check them agains
 | Daily: Kraken Ticker, all pairs | 417 KB | 2.69 ms |
 | Daily: one Coinbase products page | 318 KB (250 products; 4 pages) | 0.66 ms |
 
-Each daily step parses at most one of these payloads per invocation. The rebuild therefore runs as a job across the scan ticks after 04:00 UTC: 1 step for AssetPairs, 1 for the ticker, 4 Coinbase pages, 50 steps of 6 daily-candle fetches, then publish. That's about 56 minutes, and the previous universe keeps scanning in the meantime. Cloudflare's servers may be slower than this Mac. After deploying, confirm the real numbers under **Workers → spike-detector → Metrics → CPU time** (look at p99). The bench fails if any step exceeds 5 ms, which leaves 2× headroom.
+Each daily step parses at most one of these payloads per invocation. The rebuild therefore runs as a job across the scan ticks after 04:00 UTC: 1 step for AssetPairs, 1 for the ticker, 4 Coinbase pages, 50 steps of 6 daily-candle fetches (one at a time; symbols that fail, e.g. Coinbase 429s on Cloudflare's shared IPs, get one retry pass), then publish. Publishing sends a short Telegram heartbeat. That's about 56 minutes, and the previous universe keeps scanning in the meantime. Cloudflare's servers may be slower than this Mac. After deploying, confirm the real numbers under **Workers → spike-detector → Metrics → CPU time** (look at p99). The bench fails if any step exceeds 5 ms, which leaves 2× headroom.
 
 ## Setup
 

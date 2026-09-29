@@ -196,21 +196,29 @@ async function baselineStep(env: Env, now: number) {
       return next({ phase: "baseline", universe, kraken: undefined, coinbase: undefined, cursor: 0, baseline: {} });
     }
     case "baseline": {
-      const universe = job.universe!, baseline = { ...job.baseline };
-      const batch = universe.slice(job.cursor!, job.cursor! + BUDGET.baselineFetchesPerTick);
+      // Main pass over the universe, then one retry pass over failures (Coinbase sometimes
+      // returns 429 to Cloudflare's shared egress IPs). Fetches run one at a time to avoid bursts.
+      const universe = job.universe!, baseline = { ...job.baseline }, failed = [...(job.failed ?? [])];
+      const list = job.retried ? universe.filter(e => failed.includes(e.base)) : universe;
+      const batch = list.slice(job.cursor!, job.cursor! + BUDGET.baselineFetchesPerTick);
       const dayStart = Math.floor(now / 86_400_000) * 86_400_000;
-      await Promise.all(batch.map(async e => {
+      for (const e of batch) {
         try {
           const days = (await fetchCandles(e, 1440, dayStart - (RULES.baselineDays + 1) * 86_400_000))
             .filter(c => c.t < dayStart)                       // complete days only
             .slice(-RULES.baselineDays);
           if (days.length >= RULES.minBaselineDays) baseline[e.base] = days.reduce((s, c) => s + c.volume, 0) / days.length;
+          if (job.retried) failed.splice(failed.indexOf(e.base), 1);
         } catch (err) {
-          console.log(`baseline ${e.base}: ${err}`);
+          console.log(`baseline ${e.base}${job.retried ? " (retry)" : ""}: ${err}`);
+          if (!job.retried) failed.push(e.base);
         }
-      }));
+      }
       const cursor = job.cursor! + batch.length;
-      return next({ cursor, baseline, phase: cursor >= universe.length ? "publish" : "baseline" });
+      if (cursor < list.length) return next({ cursor, baseline, failed });
+      if (!job.retried && failed.length) return next({ cursor: 0, baseline, failed, retried: true });
+      if (failed.length) console.log(`baseline missing after retry: ${failed.join(", ")}`);
+      return next({ baseline, failed, phase: "publish" });
     }
     case "publish": {
       const built_at = new Date(now).toISOString();

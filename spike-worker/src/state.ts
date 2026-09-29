@@ -16,6 +16,8 @@ export interface Job {
   universe?: UniverseEntry[];
   cursor?: number;
   baseline?: Record<string, number>;
+  failed?: string[];      // bases whose daily candles failed (e.g. 429); retried once before publishing
+  retried?: boolean;
 }
 
 export interface TickResult {
