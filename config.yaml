@@ -2,7 +2,7 @@
 # Everything tunable lives here; the code reads this file at startup.
 
 account:
-  capital_usd: 1000          # trading bankroll (NOT the long-term portfolio)
+  capital_usd: 500           # trading bankroll (NOT the long-term portfolio)
   risk_per_trade_pct: 5      # a stop-out costs this % of capital
   max_position_pct: 50       # never put more than this % of capital in one trade
   max_concurrent_trades: 2   # open positions at once; further setups are logged as skipped_concurrent (null = no limit)
