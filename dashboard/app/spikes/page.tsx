@@ -1,4 +1,5 @@
 import { supabase, type SpikeAlert, type SpikeScoreboardRow } from "@/lib/supabase";
+import { fmtDateTime } from "@/lib/time";
 
 export const revalidate = 60;
 
@@ -23,7 +24,7 @@ export default async function SpikesPage() {
         Every spike alert is graded on what price did next: returns at +15/30/60/240 min, the best and worst move within
         240 min, and whether the suggested take-profit or stop was touched first. Net 60m subtracts a flat 1.5 points;
         net real subtracts each alert's own cost (spread at alert time + taker fees both ways). The micro row is shadow
-        mode: spikes on coins under $1M/day, graded but never sent. Measurement only. Nothing here is traded.
+        mode: spikes on coins under $1M/day, graded and sent marked MICRO. Measurement only. Nothing here is traded.
       </p>
       <h2 style={{ fontSize: 16 }}>Scoreboard {day ? <span className="muted">({day})</span> : null}</h2>
       <div className="wrap">
@@ -63,7 +64,7 @@ export default async function SpikesPage() {
           <tbody>
             {alerts.map(a => (
               <tr key={a.id}>
-                <td>{new Date(a.fired_at).toLocaleString()}</td>
+                <td>{fmtDateTime(a.fired_at)}</td>
                 <td><strong>{a.symbol}</strong>{a.shadow && <span className="muted"> · shadow</span>}</td><td>{a.exchange}</td>
                 <td className="up">{pct(a.move_30m)}</td><td>{a.vol_multiple?.toFixed(1) ?? "–"}</td>
                 <td>{a.liquidity_label ?? "–"}</td>

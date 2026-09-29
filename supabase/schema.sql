@@ -207,7 +207,7 @@ create policy "anon read spike_alerts" on spike_alerts for select to anon using 
 create policy "anon read spike_scoreboard" on spike_scoreboard for select to anon using (true);
 
 -- Shadow mode + per-alert cost (also in supabase/migrations/2026-09-29_spike_shadow_mode.sql)
-alter table spike_alerts add column if not exists shadow boolean not null default false;  -- true = graded, never sent
+alter table spike_alerts add column if not exists shadow boolean not null default false;  -- true = micro coin (< $1M/day): graded, sent marked MICRO (never sent before 2026-09-29)
 alter table spike_alerts add column if not exists spread_pct double precision;             -- (ask − bid) / mid at alert, %
 alter table spike_alerts add column if not exists cost_pct double precision;               -- spread + 2 × taker fee, %
 alter table spike_alerts add column if not exists net_60_real double precision;            -- ret_60 − cost_pct

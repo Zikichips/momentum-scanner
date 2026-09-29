@@ -113,6 +113,23 @@ export function formatAlert(a: AlertView): string {
   ].join("\n");
 }
 
+export interface MicroAlertView {
+  symbol: string; exchange: Exchange; move30: number; volMultiple: number; price: number; high: number;
+  vol24h: number; costPct: number; size: number; lv: Levels;
+}
+
+/** Micro coin (< $1M/day) spike: shorter message, flagged so it isn't mistaken for a live alert.
+ *  No news, Reddit or prior-spike lines, since shadow alerts skip those calls. */
+export function formatMicroAlert(a: MicroAlertView): string {
+  const ex = a.exchange === "kraken" ? "Kraken" : "Coinbase";
+  return [
+    `SPIKE (MICRO) — ${a.symbol}   ${ex}`,
+    `+${(a.move30 * 100).toFixed(1)}% in 30 min · vol ${a.volMultiple.toFixed(1)}× · now ${fmtPrice(a.price)} (30m high ${fmtPrice(a.high)})`,
+    `liquidity micro ($${fmtUsd(a.vol24h)}/24h) · round-trip cost ~${a.costPct.toFixed(1)}% + slippage`,
+    `Size $${a.size.toFixed(0)} · stop ${fmtPrice(a.lv.stop)} (−${a.lv.stopPct.toFixed(1)}%) · TP ${fmtPrice(a.lv.takeProfit)} (+${a.lv.tpPct.toFixed(1)}%)`,
+  ].join("\n");
+}
+
 // ------------------------------------------------------------------ grading
 export interface GradeInput { firedAt: number; price: number; stop: number; takeProfit: number; costPct?: number | null }
 export interface GradePatch {
@@ -190,7 +207,7 @@ export function segmentStats(rows: GradedRow[]) {
 export interface ScoreRow { day: string; segment: string; [stat: string]: string | number | null }
 
 /** One row per segment. overall, liquidity:{thin,ok,liquid} and news:{yes,no,unknown} cover the
- *  alerts actually sent; liquidity:micro covers the shadow alerts (graded, never sent). */
+ *  alerts actually sent; liquidity:micro covers the shadow alerts (micro coins, sent marked MICRO). */
 export function scoreboard(day: string, rows: GradedRow[]): ScoreRow[] {
   const live = rows.filter(r => !r.shadow);
   const segs: [string, GradedRow[]][] = [

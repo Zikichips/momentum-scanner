@@ -15,21 +15,21 @@ Storage: **Durable Object (SQLite)** for the rolling window, cooldowns and rebui
 ## Rules
 
 - **Universe:** top 300 USD spot pairs by 24h quote volume, Kraken ∪ Coinbase, deduplicated by base symbol: when both exchanges list a coin, the one with the higher 24h quote volume is used for prices, candles, grading and the liquidity check (Kraken on a tie), and the coin is ranked by that volume. Excludes stablecoins and fiat bases (USDT, USDC, DAI, TUSD, PYUSD, EUR, GBP, CAD, plus USD1, USDS, USDE, FDUSD, USDG, RLUSD, USDQ, EURC, EURQ, USDD). Coinbase `BASE-USDC` books are skipped because Coinbase shows them as USD. Rebuilt daily.
-- **Minimum liquidity:** 24h quote volume ≥ $1M to alert. Below that the coin is **micro**, and its spikes go to shadow mode (below).
+- **Minimum liquidity:** 24h quote volume ≥ $1M for a full alert. Below that the coin is **micro**, and its spikes go to shadow mode (below).
 - **Spike:** all of
   - `price_now / price_30min_ago − 1 ≥ 0.15`
   - `volume_last_30min ≥ 5 × (30-day average daily volume / 48)`
   - `price_now ≥ 0.97 × high_last_30min`
 - **Cooldown:** one alert per base symbol per 4 hours.
-- **Liquidity label:** micro < $1M (shadow only) · thin < $2M · ok $2–20M · liquid > $20M (24h quote volume).
+- **Liquidity label:** micro < $1M (shadow, sent marked MICRO) · thin < $2M · ok $2–20M · liquid > $20M (24h quote volume).
 - **Suggested levels:** size = `position_size()` from the Python scanner (5% of `CAPITAL_USD` at risk, capped at 50%); stop = `max(price_30min_ago, price_now × 0.87)`; TP = `price_now + 1.5 × (price_now − stop)`.
 - **Grading:** close-to-alert returns at +15/30/60/240 min; MFE/MAE within 240 min; which level was touched first (if one 1-minute bar touches both, the stop counts first); `net_60 = ret_60 − 1.5`.
 - **Cost per alert:** `cost_pct` = the spread at alert time (from the same per-minute quotes) + 2 × the exchange's lowest-tier taker fee (Kraken 0.40%, Coinbase 1.20%, in `src/config.ts`; check the current fee schedules). `net_60_real = ret_60 − cost_pct`, alongside the spec's flat `net_60 = ret_60 − 1.5`. Slippage beyond the top of the book isn't modelled, which flatters thin coins.
-- **Shadow mode (micro coins):** spikes that pass the three rules on coins under $1M/day are stored (`shadow = true`, `liquidity_label = micro`) and graded exactly like alerts, but no Telegram message is sent and there are no news or Reddit calls. The point is to find out whether thin-coin spikes pay after real costs. Liquid coins get the candle budget first each minute; micro coins get up to 4 checks and 3 shadow alerts per minute.
+- **Shadow mode (micro coins):** spikes that pass the three rules on coins under $1M/day are stored (`shadow = true`, `liquidity_label = micro`) and graded exactly like alerts, and sent to Telegram as a shorter `SPIKE (MICRO)` message (move, volume, 24h volume, estimated round-trip cost, levels). There are no news, Reddit or prior-spike calls. The point is to find out whether thin-coin spikes pay after real costs. Liquid coins get the candle budget first each minute; micro coins get up to 4 checks and 2 shadow alerts per minute.
 - **News 6h:** without a CryptoPanic token, headlines come from the CoinDesk, Cointelegraph, Decrypt and The Block RSS feeds. They're fetched once per minute, only when a live alert fires. A headline counts if it mentions the coin's Coinbase name (whole word; ordinary-word names like "Trump" or "Near" are skipped), its ticker in capitals (3+ letters, not an acronym like SEC or ETF), or `$TICKER` / `(TICKER)`. The alert shows the newest match from the last 6 hours with its source. `has_news` is unknown only if every feed fails. Small coins rarely make these outlets, so "none" is common and means "not in major crypto media". Check from Cloudflare with `/news?base=BTC`.
 - **Scoreboard (daily):** count, mean and median of each return and `net_60`, % TP first, % stop first. Given overall, by liquidity label, and by news (`yes` / `no` / `unknown` when CryptoPanic isn't configured).
 
-The overall, liquidity and news segments cover alerts that were sent; `liquidity:micro` covers the shadow alerts.
+The overall, liquidity and news segments cover full alerts; `liquidity:micro` covers the shadow (micro) alerts.
 
 All thresholds live in `src/config.ts`.
 
@@ -48,7 +48,7 @@ These are the Workers Free limits as understood at build time. Check them agains
 |---|---|---|
 | Worker invocations | 1/min scan + 0.1/min grade + 1/day ≈ **1,585/day** | 100,000/day |
 | External subrequests, scan (steady state) | **2** (Kraken Ticker + Coinbase products) | 50 per invocation |
-| External subrequests, scan (worst case) | 2 + 8 candidate candle fetches + 4 news feeds (once) + 3 alerts × 7 (hourly candles, Reddit ×3, prior spikes, Supabase insert, Telegram) + 4 micro candle fetches + 3 shadow inserts + 5 baseline fetches (during a rebuild) = **47** | 50 per invocation |
+| External subrequests, scan (worst case) | 2 + 8 candidate candle fetches + 4 news feeds (once) + 3 alerts × 7 (hourly candles, Reddit ×3, prior spikes, Supabase insert, Telegram) + 4 micro candle fetches + 2 shadow alerts × 2 (Supabase insert, Telegram) + 5 baseline fetches (during a rebuild) = **48** | 50 per invocation |
 | External subrequests, grade | 1 + 20 × (candles + update) = **≤ 41** | 50 per invocation |
 | Exchange APIs | Kraken 1–15 calls/min, Coinbase 1–15 calls/min | Kraken public ≈ 1/s; Coinbase public 10/s |
 | KV | 2 reads/min (**2,880/day**); **2 writes/day** | 100,000 reads, 1,000 writes/day |

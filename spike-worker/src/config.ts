@@ -3,7 +3,7 @@
 
 export const RULES = {
   universeSize: 300,              // top N USD spot pairs by 24h quote volume (Kraken ∪ Coinbase, dedup by base -> busier exchange)
-  minQuoteVolume24h: 1_000_000,   // below this 24h quote volume (USD): "micro" -> shadow alerts only (graded, not sent)
+  minQuoteVolume24h: 1_000_000,   // below this 24h quote volume (USD): "micro" -> shadow alerts (graded, sent marked MICRO)
   windowMin: 30,                  // rolling window
   minMove: 0.15,                  // price_now / price_30min_ago − 1
   prefilterMove: 0.13,            // cheap check on minute snapshots before fetching candles
@@ -35,7 +35,7 @@ export const BUDGET = {
   maxCandidatesPerScan: 8,        // 1-min candle fetches to confirm a spike (coins >= $1M; checked first)
   maxAlertsPerScan: 3,            // each alert costs up to 8 subrequests (enrichment + store + Telegram)
   maxMicroCandidatesPerScan: 4,   // extra candle fetches for micro coins (shadow mode)
-  maxShadowPerScan: 3,            // each shadow alert costs 1 subrequest (store only)
+  maxShadowPerScan: 2,            // each shadow alert costs 2 subrequests (store + Telegram)
   baselineFetchesPerTick: 5,      // daily-candle fetches per scan tick while the baseline job runs
   maxGradesPerRun: 20,            // each grade = 1 candle fetch + 1 Supabase update
 };

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  evaluateSpike, formatAlert, gradePath, levels, liquidityLabel, positionSize, scoreboard, tradeCost, type Candle,
+  evaluateSpike, formatAlert, formatMicroAlert, gradePath, levels, liquidityLabel, positionSize, scoreboard, tradeCost, type Candle,
 } from "../src/rules";
 import {
   mergeUniverse, parseCoinbaseCandles, parseCoinbasePage, parseKrakenOhlc, parseKrakenPairs, parseKrakenTicker,
@@ -97,6 +97,21 @@ describe("formatAlert", () => {
     expect(text).toContain("Reddit: n/a");
     expect(text).toContain("Prior spikes 90d: 0 · avg +60min n/a");
     expect(text).toContain("24h n/a% · 7d n/a%");
+  });
+});
+
+describe("formatMicroAlert", () => {
+  it("flags the coin as micro and shows the round-trip cost", () => {
+    const text = formatMicroAlert({
+      symbol: "DIMO", exchange: "coinbase", move30: 0.17792, volMultiple: 16.6, price: 0.017, high: 0.0172,
+      vol24h: 870_892, costPct: 2.712, size: 250, lv: levels(0.017, 0.01443),
+    });
+    expect(text.split("\n")).toEqual([
+      "SPIKE (MICRO) — DIMO   Coinbase",
+      "+17.8% in 30 min · vol 16.6× · now 0.017 (30m high 0.0172)",
+      "liquidity micro ($871k/24h) · round-trip cost ~2.7% + slippage",
+      "Size $250 · stop 0.01479 (−13.0%) · TP 0.02031 (+19.5%)",
+    ]);
   });
 });
 

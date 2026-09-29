@@ -11,7 +11,7 @@ import {
   type Quote, type UniverseEntry,
 } from "./exchanges";
 import {
-  evaluateSpike, formatAlert, gradePath, levels, liquidityLabel, positionSize, scoreboard, tradeCost, type GradedRow,
+  evaluateSpike, formatAlert, formatMicroAlert, gradePath, levels, liquidityLabel, positionSize, scoreboard, tradeCost, type GradedRow,
 } from "./rules";
 import { hasSupabase, newsHeadline, priorSpikes, redditMentions, sb, telegram } from "./services";
 import { fetchFeeds, FEEDS, findHeadline, type Feeds } from "./news";
@@ -102,7 +102,7 @@ async function scan(env: Env, now: number) {
                               && q.price / ago[base] - 1 >= RULES.prefilterMove)
       .sort((x, y) => y[1].price / ago[y[0]] - x[1].price / ago[x[0]]);
     // Coins >= $1M get the candle budget first and send alerts. Micro coins (< $1M) are
-    // checked with what's left and only recorded as shadow alerts: graded, never sent.
+    // checked with what's left and recorded as shadow alerts: graded, and sent marked MICRO.
     const liquid = moved.filter(([, q]) => q.qvol24 >= RULES.minQuoteVolume24h).slice(0, BUDGET.maxCandidatesPerScan);
     const micro = moved.filter(([, q]) => q.qvol24 < RULES.minQuoteVolume24h).slice(0, BUDGET.maxMicroCandidatesPerScan);
 
@@ -134,8 +134,8 @@ async function scan(env: Env, now: number) {
   await baselineStep(env, now);   // no-op unless the daily rebuild is running
 }
 
-/** Micro coin (< $1M/day) spike: stored and graded like an alert, but no Telegram message
- *  and no enrichment calls. Measures whether thin-coin spikes pay after real costs. */
+/** Micro coin (< $1M/day) spike: stored and graded like an alert, and sent to Telegram marked
+ *  MICRO, but with no enrichment calls. Measures whether thin-coin spikes pay after real costs. */
 async function shadowAlert(env: Env, e: UniverseEntry, q: Quote, chk: ReturnType<typeof evaluateSpike>, now: number) {
   const lv = levels(q.price, chk.priceAgo);
   const { spreadPct, costPct } = tradeCost(q.bid, q.ask, e.exchange);
@@ -152,6 +152,10 @@ async function shadowAlert(env: Env, e: UniverseEntry, q: Quote, chk: ReturnType
       .catch(err => console.log("store shadow alert failed:", String(err)));
   }
   console.log(`shadow alert ${e.base} ${e.exchange}: +${row.move_30m}% vol ${row.vol_multiple}x, spread ${spreadPct}%`);
+  await telegram(env, formatMicroAlert({
+    symbol: e.base, exchange: e.exchange, move30: chk.move, volMultiple: chk.volMultiple, price: q.price, high: chk.high,
+    vol24h: q.qvol24, costPct, size: row.size_usd, lv,
+  }));
 }
 
 async function fireAlert(env: Env, e: UniverseEntry, q: Quote, chk: ReturnType<typeof evaluateSpike>, now: number,
