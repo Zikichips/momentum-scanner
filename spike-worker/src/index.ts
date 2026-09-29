@@ -14,6 +14,7 @@ import {
   evaluateSpike, formatAlert, gradePath, levels, liquidityLabel, positionSize, scoreboard, tradeCost, type GradedRow,
 } from "./rules";
 import { hasSupabase, newsHeadline, priorSpikes, redditMentions, sb, telegram } from "./services";
+import { fetchFeeds, FEEDS, findHeadline, type Feeds } from "./news";
 import type { Job } from "./state";
 
 export { SpikeState } from "./state";
@@ -44,6 +45,22 @@ export default {
         universe: u ? { built_at: u.built_at, size: u.entries.length, top: u.entries.slice(0, 5) } : null,
         baseline: b ? { built_at: b.built_at, symbols: Object.keys(b.avg_daily_volume).length } : null,
         job: job ? { phase: job.phase, startedAt: new Date(job.startedAt).toISOString(), cursor: job.cursor } : null,
+      });
+    }
+    // Read-only news check from Cloudflare's network: /news?base=POND
+    const url = new URL(req.url);
+    if (url.pathname === "/news") {
+      const base = (url.searchParams.get("base") ?? "").toUpperCase();
+      const u = await env.SPIKE_KV.get<{ entries: UniverseEntry[] }>(KV_UNIVERSE, "json");
+      const name = u?.entries.find(e => e.base === base)?.name;
+      const f = await fetchFeeds();
+      const now = Date.now();
+      return Response.json({
+        base, name: name ?? null,
+        feeds: FEEDS.map(x => ({ source: x.source, items: f.items.filter(i => i.source === x.source).length })),
+        failed: f.failed,
+        headline_6h: base ? findHeadline(f.items, base, name, now) : null,
+        recent: f.items.filter(i => now - i.published <= 6 * 3600_000).length,
       });
     }
     return new Response("spike-detector: see /status", { status: 404 });
@@ -90,6 +107,12 @@ async function scan(env: Env, now: number) {
     const micro = moved.filter(([, q]) => q.qvol24 < RULES.minQuoteVolume24h).slice(0, BUDGET.maxMicroCandidatesPerScan);
 
     let alerts = 0, shadows = 0;
+    // News feeds: fetched at most once per scan, and only if a live alert fires.
+    let feedsP: Promise<Feeds> | null = null;
+    const feeds = () => (feedsP ??= fetchFeeds().then(f => {
+      if (f.failed.length) console.log("news feeds failed:", f.failed.join("; "));
+      return f;
+    }));
     for (const [base, q] of [...liquid, ...micro]) {
       const shadow = q.qvol24 < RULES.minQuoteVolume24h;
       if (shadow ? shadows >= BUDGET.maxShadowPerScan : alerts >= BUDGET.maxAlertsPerScan) continue;
@@ -100,7 +123,7 @@ async function scan(env: Env, now: number) {
         console.log(`candidate ${base} ${e.exchange}${shadow ? " (micro)" : ""}: ${chk.ok ? "SPIKE" : chk.reasons.join(", ")}`);
         if (!chk.ok) continue;
         if (shadow) { await shadowAlert(env, e, q, chk, now); shadows++; }
-        else { await fireAlert(env, e, q, chk, now); alerts++; }
+        else { await fireAlert(env, e, q, chk, now, feeds); alerts++; }
         await st.markAlert(base, now);
       } catch (err) {
         console.log(`candidate ${base}: ${err}`);
@@ -131,12 +154,13 @@ async function shadowAlert(env: Env, e: UniverseEntry, q: Quote, chk: ReturnType
   console.log(`shadow alert ${e.base} ${e.exchange}: +${row.move_30m}% vol ${row.vol_multiple}x, spread ${spreadPct}%`);
 }
 
-async function fireAlert(env: Env, e: UniverseEntry, q: Quote, chk: ReturnType<typeof evaluateSpike>, now: number) {
+async function fireAlert(env: Env, e: UniverseEntry, q: Quote, chk: ReturnType<typeof evaluateSpike>, now: number,
+                         feeds: () => Promise<Feeds>) {
   const lv = levels(q.price, chk.priceAgo);
   const size = positionSize(q.price, lv.stop, +env.CAPITAL_USD, +env.RISK_PCT, +env.MAX_POSITION_PCT);
   const [hourly, news, reddit, prior] = await Promise.all([
     fetchCandles(e, 60, now - (7 * 24 + 2) * 3600_000).catch(() => []),
-    newsHeadline(env, e.base, now),
+    newsHeadline(env, e.base, e.name, now, feeds),
     redditMentions(env, e.base, now),
     priorSpikes(env, e.base, now),
   ]);

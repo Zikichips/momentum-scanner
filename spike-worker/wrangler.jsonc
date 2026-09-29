@@ -14,7 +14,8 @@
     "CAPITAL_USD": "1000",
     "RISK_PCT": "5",
     "MAX_POSITION_PCT": "50",
-    "CRYPTOPANIC_URL": "https://cryptopanic.com/api/v1/posts/"
+    // Paid "growth" API (the free v1 API returns 403). Only used if CRYPTOPANIC_TOKEN is set; otherwise RSS.
+    "CRYPTOPANIC_URL": "https://cryptopanic.com/api/growth/v2/posts/"
   },
   "observability": { "enabled": true }
   // Secrets (npx wrangler secret put NAME): SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,

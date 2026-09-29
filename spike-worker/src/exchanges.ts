@@ -17,7 +17,7 @@ const KRAKEN_ALIASES: Record<string, string> = { XBT: "BTC", XDG: "DOGE" };
 export const normBase = (b: string) => KRAKEN_ALIASES[b] ?? b;
 
 export interface Quote { price: number; qvol24: number; bid: number; ask: number }
-export interface UniverseEntry { base: string; exchange: Exchange; id: string; qvol24: number }
+export interface UniverseEntry { base: string; exchange: Exchange; id: string; qvol24: number; name?: string }  // name: from Coinbase, for news matching
 
 // ------------------------------------------------------------------ universe (daily, one payload per step)
 /** AssetPairs -> {tickerKey: base} for online USD-quoted spot pairs. */
@@ -50,7 +50,8 @@ export function parseCoinbasePage(json: any): UniverseEntry[] {
         || p.trading_disabled || p.is_disabled || p.view_only) continue;
     const base = String(p.base_display_symbol || p.product_id.split("-")[0]).toUpperCase();
     if (EXCLUDE_BASES.has(base)) continue;
-    out.push({ base, exchange: "coinbase", id: p.product_id, qvol24: parseFloat(p.approximate_quote_24h_volume || "0") });
+    out.push({ base, exchange: "coinbase", id: p.product_id, qvol24: parseFloat(p.approximate_quote_24h_volume || "0"),
+               ...(p.base_name ? { name: String(p.base_name) } : {}) });
   }
   return out;
 }
@@ -64,7 +65,10 @@ export function mergeUniverse(kraken: UniverseEntry[], coinbase: UniverseEntry[]
     const prev = byBase.get(e.base);
     if (!prev || e.qvol24 > prev.qvol24) byBase.set(e.base, e);
   }
-  return [...byBase.values()].sort((a, b) => b.qvol24 - a.qvol24).slice(0, n);
+  // Coin names only come from Coinbase; keep them when the Kraken pair wins.
+  const names = new Map(coinbase.filter(e => e.name).map(e => [e.base, e.name!]));
+  return [...byBase.values()].sort((a, b) => b.qvol24 - a.qvol24).slice(0, n)
+    .map(e => (!e.name && names.has(e.base) ? { ...e, name: names.get(e.base) } : e));
 }
 
 export const fetchKrakenPairs = async () => parseKrakenPairs(await getJson(`${KRAKEN}/AssetPairs`));

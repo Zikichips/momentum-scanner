@@ -1,6 +1,7 @@
 // Supabase REST, Telegram and best-effort enrichment (CryptoPanic, Reddit). Every enrichment
 // call has a short timeout and returns null on any failure: it must never block an alert.
 import type { Env } from "./config";
+import { findHeadline, type Feeds } from "./news";
 
 const T = (ms: number) => AbortSignal.timeout(ms);
 
@@ -38,15 +39,29 @@ export async function telegram(env: Env, text: string): Promise<void> {
 }
 
 // ------------------------------------------------------------------ enrichment
-/** Most recent CryptoPanic headline for the base in the last 6h, or null. */
-export async function newsHeadline(env: Env, base: string, now: number): Promise<{ checked: boolean; headline: string | null }> {
-  if (!env.CRYPTOPANIC_TOKEN) return { checked: false, headline: null };
+/** Newest headline in the last 6h mentioning the coin. CryptoPanic when a token is set (paid
+ *  "growth" API; the free v1 API now returns 403), otherwise the free RSS feeds in news.ts.
+ *  checked = false when no source answered, so has_news is stored as unknown, not "no". */
+export async function newsHeadline(env: Env, base: string, name: string | undefined, now: number,
+                                   feeds: () => Promise<Feeds>): Promise<{ checked: boolean; headline: string | null }> {
+  if (env.CRYPTOPANIC_TOKEN) {
+    try {
+      const r = await fetch(`${env.CRYPTOPANIC_URL}?auth_token=${env.CRYPTOPANIC_TOKEN}&currencies=${base}&public=true`, { signal: T(4000) });
+      if (r.ok) {
+        const json: any = await r.json();
+        const hit = (json.results ?? []).find((p: any) => now - Date.parse(p.published_at) <= 6 * 3600_000);
+        return { checked: true, headline: hit ? String(hit.title).slice(0, 140) : null };
+      }
+      console.log("cryptopanic", r.status, "- falling back to RSS");
+    } catch (err) {
+      console.log("cryptopanic failed - falling back to RSS:", String(err));
+    }
+  }
   try {
-    const r = await fetch(`${env.CRYPTOPANIC_URL}?auth_token=${env.CRYPTOPANIC_TOKEN}&currencies=${base}&public=true`, { signal: T(4000) });
-    if (!r.ok) return { checked: false, headline: null };
-    const json: any = await r.json();
-    const hit = (json.results ?? []).find((p: any) => now - Date.parse(p.published_at) <= 6 * 3600_000);
-    return { checked: true, headline: hit ? String(hit.title).slice(0, 140) : null };
+    const f = await feeds();
+    if (f.ok === 0) return { checked: false, headline: null };
+    const hit = findHeadline(f.items, base, name, now);
+    return { checked: true, headline: hit ? `${hit.title.slice(0, 140)} (${hit.source})` : null };
   } catch {
     return { checked: false, headline: null };
   }

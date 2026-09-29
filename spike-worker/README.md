@@ -26,6 +26,7 @@ Storage: **Durable Object (SQLite)** for the rolling window, cooldowns and rebui
 - **Grading:** close-to-alert returns at +15/30/60/240 min; MFE/MAE within 240 min; which level was touched first (if one 1-minute bar touches both, the stop counts first); `net_60 = ret_60 − 1.5`.
 - **Cost per alert:** `cost_pct` = the spread at alert time (from the same per-minute quotes) + 2 × the exchange's lowest-tier taker fee (Kraken 0.40%, Coinbase 1.20%, in `src/config.ts`; check the current fee schedules). `net_60_real = ret_60 − cost_pct`, alongside the spec's flat `net_60 = ret_60 − 1.5`. Slippage beyond the top of the book isn't modelled, which flatters thin coins.
 - **Shadow mode (micro coins):** spikes that pass the three rules on coins under $1M/day are stored (`shadow = true`, `liquidity_label = micro`) and graded exactly like alerts, but no Telegram message is sent and there are no news or Reddit calls. The point is to find out whether thin-coin spikes pay after real costs. Liquid coins get the candle budget first each minute; micro coins get up to 4 checks and 3 shadow alerts per minute.
+- **News 6h:** without a CryptoPanic token, headlines come from the CoinDesk, Cointelegraph, Decrypt and The Block RSS feeds. They're fetched once per minute, only when a live alert fires. A headline counts if it mentions the coin's Coinbase name (whole word; ordinary-word names like "Trump" or "Near" are skipped), its ticker in capitals (3+ letters, not an acronym like SEC or ETF), or `$TICKER` / `(TICKER)`. The alert shows the newest match from the last 6 hours with its source. `has_news` is unknown only if every feed fails. Small coins rarely make these outlets, so "none" is common and means "not in major crypto media". Check from Cloudflare with `/news?base=BTC`.
 - **Scoreboard (daily):** count, mean and median of each return and `net_60`, % TP first, % stop first. Given overall, by liquidity label, and by news (`yes` / `no` / `unknown` when CryptoPanic isn't configured).
 
 The overall, liquidity and news segments cover alerts that were sent; `liquidity:micro` covers the shadow alerts.
@@ -47,7 +48,7 @@ These are the Workers Free limits as understood at build time. Check them agains
 |---|---|---|
 | Worker invocations | 1/min scan + 0.1/min grade + 1/day ≈ **1,585/day** | 100,000/day |
 | External subrequests, scan (steady state) | **2** (Kraken Ticker + Coinbase products) | 50 per invocation |
-| External subrequests, scan (worst case) | 2 + 8 candidate candle fetches + 3 alerts × 8 (hourly candles, CryptoPanic, Reddit ×3, prior spikes, Supabase insert, Telegram) + 4 micro candle fetches + 3 shadow inserts + 5 baseline fetches (during a rebuild) = **46** | 50 per invocation |
+| External subrequests, scan (worst case) | 2 + 8 candidate candle fetches + 4 news feeds (once) + 3 alerts × 7 (hourly candles, Reddit ×3, prior spikes, Supabase insert, Telegram) + 4 micro candle fetches + 3 shadow inserts + 5 baseline fetches (during a rebuild) = **47** | 50 per invocation |
 | External subrequests, grade | 1 + 20 × (candles + update) = **≤ 41** | 50 per invocation |
 | Exchange APIs | Kraken 1–15 calls/min, Coinbase 1–15 calls/min | Kraken public ≈ 1/s; Coinbase public 10/s |
 | KV | 2 reads/min (**2,880/day**); **2 writes/day** | 100,000 reads, 1,000 writes/day |
@@ -82,7 +83,7 @@ Run `supabase/schema.sql` in the Supabase SQL editor (the spike tables are at th
 |---|---|
 | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | storing alerts, grading, scoreboard, prior-spike counts. Without them alerts are only logged, and nothing is graded |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | alerts. Without them the message is logged |
-| `CRYPTOPANIC_TOKEN` | "News 6h" line and `has_news` (optional; `unknown` without it) |
+| `CRYPTOPANIC_TOKEN` | optional, paid. The free CryptoPanic v1 API now returns 403; the "growth" v2 API needs a paid plan. Without a token, news comes from free RSS feeds (below) |
 | `REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET` | Reddit line (optional). Create a "script" app at reddit.com/prefs/apps. The Worker uses Reddit's OAuth API directly, since praw is Python-only |
 
 ```bash
