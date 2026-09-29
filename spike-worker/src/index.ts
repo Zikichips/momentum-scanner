@@ -217,6 +217,9 @@ async function baselineStep(env: Env, now: number) {
       await env.SPIKE_KV.put(KV_UNIVERSE, JSON.stringify({ built_at, entries: job.universe }));
       await env.SPIKE_KV.put(KV_BASELINE, JSON.stringify({ built_at, avg_daily_volume: job.baseline }));
       console.log(`published universe ${job.universe!.length}, baseline ${Object.keys(job.baseline!).length}`);
+      // Daily heartbeat: confirms Telegram works and that the detector is alive.
+      await telegram(env, `Spike detector: universe rebuilt — ${job.universe!.length} pairs, ` +
+                          `baselines for ${Object.keys(job.baseline!).length}. Scanning.`);
       return st.setJob({ phase: "done", startedAt: job.startedAt });
     }
   }
