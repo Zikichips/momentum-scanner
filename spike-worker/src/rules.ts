@@ -16,26 +16,34 @@ export interface SpikeCheck {
   reasons: string[];     // failed conditions, for logs
 }
 
-/** The three spike conditions on 1-minute candles covering the last 30 minutes.
+/** Thresholds for one window: the 30-minute spike, or the 15-minute early warning. */
+export interface WindowRule { windowMin: number; minMove: number; volumeMultiple: number; nearHigh: number; maxLateMin: number }
+export const SPIKE_RULE: WindowRule = {
+  windowMin: RULES.windowMin, minMove: RULES.minMove, volumeMultiple: RULES.volumeMultiple, nearHigh: RULES.nearHigh, maxLateMin: 5,
+};
+export const EARLY_RULE: WindowRule = RULES.early;
+
+/** The three spike conditions on 1-minute candles covering the rule's window (30 minutes by default).
  *  avgDailyVolume is in base units, like candle volume. */
-export function evaluateSpike(candles: Candle[], priceNow: number, avgDailyVolume: number, now: number): SpikeCheck {
-  const from = now - RULES.windowMin * 60_000;
+export function evaluateSpike(candles: Candle[], priceNow: number, avgDailyVolume: number, now: number,
+                              rule: WindowRule = SPIKE_RULE): SpikeCheck {
+  const from = now - rule.windowMin * 60_000;
   const w = candles.filter(c => c.t >= from && c.t <= now).sort((a, b) => a.t - b.t);
   const fail = (r: string): SpikeCheck => ({ ok: false, move: 0, volMultiple: 0, priceAgo: 0, high: 0, reasons: [r] });
   if (w.length === 0) return fail("no candles");
   if (!(avgDailyVolume > 0)) return fail("no baseline");
   // A window that starts late (thin pair, no trades at the start) would understate the move's base.
-  if (w[0].t - from > 5 * 60_000) return fail("window starts late");
+  if (w[0].t - from > rule.maxLateMin * 60_000) return fail("window starts late");
 
   const priceAgo = w[0].open;
   const high = Math.max(priceNow, ...w.map(c => c.high));
   const vol = w.reduce((s, c) => s + c.volume, 0);
   const move = priceNow / priceAgo - 1;
-  const volMultiple = vol / (avgDailyVolume / 48);
+  const volMultiple = vol / (avgDailyVolume * rule.windowMin / 1440);
   const reasons: string[] = [];
-  if (!(move >= RULES.minMove)) reasons.push(`move ${(move * 100).toFixed(1)}%`);
-  if (!(volMultiple >= RULES.volumeMultiple)) reasons.push(`vol ${volMultiple.toFixed(1)}x`);
-  if (!(priceNow >= RULES.nearHigh * high)) reasons.push(`off high ${((priceNow / high - 1) * 100).toFixed(1)}%`);
+  if (!(move >= rule.minMove)) reasons.push(`move ${(move * 100).toFixed(1)}%`);
+  if (!(volMultiple >= rule.volumeMultiple)) reasons.push(`vol ${volMultiple.toFixed(1)}x`);
+  if (!(priceNow >= rule.nearHigh * high)) reasons.push(`off high ${((priceNow / high - 1) * 100).toFixed(1)}%`);
   return { ok: reasons.length === 0, move, volMultiple, priceAgo, high, reasons };
 }
 
@@ -130,6 +138,24 @@ export function formatMicroAlert(a: MicroAlertView): string {
   ].join("\n");
 }
 
+export interface EarlyAlertView {
+  symbol: string; exchange: Exchange; move15: number; volMultiple: number; price: number; high: number;
+  liquidity: Liquidity; vol24h: number; costPct: number; size: number; lv: Levels;
+}
+
+/** Early warning: +8% in 15 min on heavy volume, before the +15%/30-min spike rule. Short message,
+ *  flagged so it isn't mistaken for a confirmed spike. Graded and scored separately. */
+export function formatEarlyAlert(a: EarlyAlertView): string {
+  const ex = a.exchange === "kraken" ? "Kraken" : "Coinbase";
+  return [
+    `EARLY — ${a.symbol}   ${ex}`,
+    `+${(a.move15 * 100).toFixed(1)}% in 15 min · vol ${a.volMultiple.toFixed(1)}× · now ${fmtPrice(a.price)} (15m high ${fmtPrice(a.high)})`,
+    `liquidity ${a.liquidity} ($${fmtUsd(a.vol24h)}/24h) · round-trip cost ~${a.costPct.toFixed(1)}%`,
+    `Not yet a confirmed spike (+15% in 30 min). Early alerts are scored separately.`,
+    `Size $${a.size.toFixed(0)} · stop ${fmtPrice(a.lv.stop)} (−${a.lv.stopPct.toFixed(1)}%) · TP ${fmtPrice(a.lv.takeProfit)} (+${a.lv.tpPct.toFixed(1)}%)`,
+  ].join("\n");
+}
+
 // ------------------------------------------------------------------ grading
 export interface GradeInput { firedAt: number; price: number; stop: number; takeProfit: number; costPct?: number | null }
 export interface GradePatch {
@@ -179,7 +205,7 @@ export function gradePath(a: GradeInput, candles: Candle[], now: number): GradeP
 
 // ------------------------------------------------------------------ scoreboard
 export interface GradedRow {
-  liquidity_label: Liquidity; has_news: boolean | null; shadow?: boolean | null;
+  liquidity_label: Liquidity; has_news: boolean | null; shadow?: boolean | null; kind?: "spike" | "early" | null;
   ret_15: number | null; ret_30: number | null; ret_60: number | null; ret_240: number | null; net_60: number | null;
   net_60_real?: number | null;
   hit_tp_first: boolean | null; hit_stop_first: boolean | null;
@@ -207,16 +233,20 @@ export function segmentStats(rows: GradedRow[]) {
 export interface ScoreRow { day: string; segment: string; [stat: string]: string | number | null }
 
 /** One row per segment. overall, liquidity:{thin,ok,liquid} and news:{yes,no,unknown} cover the
- *  alerts actually sent; liquidity:micro covers the shadow alerts (micro coins, sent marked MICRO). */
+ *  spike alerts on coins >= $1M; liquidity:micro covers the shadow alerts (micro coins, sent marked
+ *  MICRO); early covers the early warnings (+8% in 15 min). */
 export function scoreboard(day: string, rows: GradedRow[]): ScoreRow[] {
-  const live = rows.filter(r => !r.shadow);
+  const early = rows.filter(r => r.kind === "early");
+  const spikes = rows.filter(r => r.kind !== "early");
+  const live = spikes.filter(r => !r.shadow);
   const segs: [string, GradedRow[]][] = [
     ["overall", live],
     ...(["thin", "ok", "liquid"] as const).map(l => [`liquidity:${l}`, live.filter(r => r.liquidity_label === l)] as [string, GradedRow[]]),
     ["news:yes", live.filter(r => r.has_news === true)],
     ["news:no", live.filter(r => r.has_news === false)],
     ["news:unknown", live.filter(r => r.has_news == null)],   // CryptoPanic not configured or failed
-    ["liquidity:micro", rows.filter(r => r.shadow)],
+    ["liquidity:micro", spikes.filter(r => r.shadow)],
+    ["early", early],
   ];
   return segs.map(([segment, rs]) => ({ day, segment, ...segmentStats(rs) }));
 }

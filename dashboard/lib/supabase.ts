@@ -32,7 +32,7 @@ export type SpikeAlert = {
   id: string; symbol: string; exchange: "kraken" | "coinbase"; fired_at: string; price_at_alert: number;
   move_30m: number | null; vol_multiple: number | null; liquidity_label: "micro" | "thin" | "ok" | "liquid" | null;
   vol_24h: number | null; has_news: boolean | null; news_headline: string | null;
-  shadow: boolean | null; spread_pct: number | null; cost_pct: number | null; net_60_real: number | null;
+  shadow: boolean | null; kind?: "spike" | "early" | null; spread_pct: number | null; cost_pct: number | null; net_60_real: number | null;
   ret_15: number | null; ret_30: number | null; ret_60: number | null; ret_240: number | null;
   mfe_240: number | null; mae_240: number | null; hit_tp_first: boolean | null; hit_stop_first: boolean | null;
   net_60: number | null; graded_complete: boolean;

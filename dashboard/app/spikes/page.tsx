@@ -5,7 +5,7 @@ export const revalidate = 60;
 
 const pct = (v: number | null | undefined, d = 1) => v == null ? "–" : `${v > 0 ? "+" : ""}${v.toFixed(d)}%`;
 const cls = (v: number | null | undefined) => v == null ? "muted" : v > 0 ? "up" : "down";
-const SEGMENTS = ["overall", "liquidity:thin", "liquidity:ok", "liquidity:liquid", "news:yes", "news:no", "news:unknown", "liquidity:micro"];
+const SEGMENTS = ["overall", "liquidity:thin", "liquidity:ok", "liquidity:liquid", "news:yes", "news:no", "news:unknown", "liquidity:micro", "early"];
 
 export default async function SpikesPage() {
   const [{ data: sb }, { data: al }] = await Promise.all([
@@ -24,7 +24,9 @@ export default async function SpikesPage() {
         Every spike alert is graded on what price did next: returns at +15/30/60/240 min, the best and worst move within
         240 min, and whether the suggested take-profit or stop was touched first. Net 60m subtracts a flat 1.5 points;
         net real subtracts each alert's own cost (spread at alert time + taker fees both ways). The micro row is shadow
-        mode: spikes on coins under $1M/day, graded and sent marked MICRO. Measurement only. Nothing here is traded.
+        mode: spikes on coins under $1M/day, graded and sent marked MICRO. The early row is the early warning: +8% in
+        15 minutes on heavy volume (coins over $1M/day), sent marked EARLY, and its move is over 15 minutes, not 30.
+        Measurement only. Nothing here is traded.
       </p>
       <h2 style={{ fontSize: 16 }}>Scoreboard {day ? <span className="muted">({day})</span> : null}</h2>
       <div className="wrap">
@@ -58,15 +60,15 @@ export default async function SpikesPage() {
       <div className="wrap">
         <table>
           <thead><tr>
-            <th>Fired</th><th>Symbol</th><th>Exch.</th><th>Move 30m</th><th>Vol ×</th><th>Liquidity</th><th>News</th>
+            <th>Fired</th><th>Symbol</th><th>Exch.</th><th>Move</th><th>Vol ×</th><th>Liquidity</th><th>News</th>
             <th>+15m</th><th>+60m</th><th>+240m</th><th>MFE / MAE</th><th>First hit</th><th>Cost</th><th>Net real</th>
           </tr></thead>
           <tbody>
             {alerts.map(a => (
               <tr key={a.id}>
                 <td>{fmtDateTime(a.fired_at)}</td>
-                <td><strong>{a.symbol}</strong>{a.shadow && <span className="muted"> · shadow</span>}</td><td>{a.exchange}</td>
-                <td className="up">{pct(a.move_30m)}</td><td>{a.vol_multiple?.toFixed(1) ?? "–"}</td>
+                <td><strong>{a.symbol}</strong>{a.shadow && <span className="muted"> · shadow</span>}{a.kind === "early" && <span className="muted"> · early</span>}</td><td>{a.exchange}</td>
+                <td className="up">{pct(a.move_30m)} <span className="muted">{a.kind === "early" ? "15m" : "30m"}</span></td><td>{a.vol_multiple?.toFixed(1) ?? "–"}</td>
                 <td>{a.liquidity_label ?? "–"}</td>
                 <td className="muted">{a.has_news == null ? "?" : a.has_news ? (a.news_headline ?? "yes") : "none"}</td>
                 <td className={cls(a.ret_15)}>{pct(a.ret_15)}</td>

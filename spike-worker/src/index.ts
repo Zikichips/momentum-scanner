@@ -1,5 +1,5 @@
 // Spike detector. Detection and measurement only: it alerts and grades, it never trades.
-//   * * * * *     scan       — quotes for the universe, rolling window, spike check, alert
+//   * * * * *     scan       — quotes for the universe, rolling window, spike + early-warning checks, alert
 //   */10 * * * *  grade      — fill ret_15/30/60/240, MFE/MAE, TP/stop-first for recent alerts
 //   0 4 * * *     baseline   — start the universe + 30-day baseline rebuild; write the scoreboard
 // The rebuild is split into one bounded step per scan tick (CPU and subrequest limits), and
@@ -11,7 +11,7 @@ import {
   type Quote, type UniverseEntry,
 } from "./exchanges";
 import {
-  evaluateSpike, formatAlert, formatMicroAlert, gradePath, levels, liquidityLabel, positionSize, scoreboard, tradeCost, type GradedRow,
+  EARLY_RULE, evaluateSpike, formatAlert, formatEarlyAlert, formatMicroAlert, gradePath, levels, liquidityLabel, positionSize, scoreboard, tradeCost, type GradedRow,
 } from "./rules";
 import { hasSupabase, newsHeadline, priorSpikes, redditMentions, sb, telegram } from "./services";
 import { fetchFeeds, FEEDS, findHeadline, type Feeds } from "./news";
@@ -91,21 +91,34 @@ async function scan(env: Env, now: number) {
 
   const quotes = await fetchQuotes(u.entries);
   const prices = Object.fromEntries(Object.entries(quotes).map(([k, q]) => [k, q.price]));
-  const { ago, agoTs, cooldown } = await st.tick(now, prices);
+  const { ago, agoTs, agoEarly, cooldown } = await st.tick(now, prices);
   console.log(`scan ${new Date(now).toISOString()}: ${Object.keys(quotes).length}/${u.entries.length} quotes, ` +
               (agoTs ? `window from ${Math.round((now - agoTs) / 60_000)} min ago` : "no 30-min-old snapshot yet"));
 
-  if (ago) {
+  if (ago || agoEarly) {
     const byBase = new Map(u.entries.map(e => [e.base, e]));
-    const moved = Object.entries(quotes)
-      .filter(([base, q]) => ago[base] > 0 && !cooldown[base] && b.avg_daily_volume[base] > 0
-                              && q.price / ago[base] - 1 >= RULES.prefilterMove)
-      .sort((x, y) => y[1].price / ago[y[0]] - x[1].price / ago[x[0]]);
+    const cooling = (key: string, ms: number) => cooldown[key] != null && now - cooldown[key] < ms;
+    const moveFrom = (snap: Record<string, number> | null, base: string, q: Quote) =>
+      snap && snap[base] > 0 ? q.price / snap[base] - 1 : -Infinity;
+    const quoted = Object.entries(quotes).filter(([base]) => b.avg_daily_volume[base] > 0);
+    const moved = quoted
+      .filter(([base, q]) => !cooling(base, RULES.cooldownMs) && moveFrom(ago, base, q) >= RULES.prefilterMove)
+      .sort((x, y) => moveFrom(ago, y[0], y[1]) - moveFrom(ago, x[0], x[1]));
     // Coins >= $1M get the candle budget first and send alerts. Micro coins (< $1M) are
     // checked with what's left and recorded as shadow alerts: graded, and sent marked MICRO.
     const liquid = moved.filter(([, q]) => q.qvol24 >= RULES.minQuoteVolume24h).slice(0, BUDGET.maxCandidatesPerScan);
     const micro = moved.filter(([, q]) => q.qvol24 < RULES.minQuoteVolume24h).slice(0, BUDGET.maxMicroCandidatesPerScan);
+    // Early warnings (coins >= $1M): the rest of the candle budget goes to +6% in 15 min on the
+    // snapshots. Spike candidates are checked for an early alert on the candles already fetched.
+    const earlyOk = (base: string) => !cooling(`early:${base}`, RULES.early.cooldownMs);
+    const taken = new Set(liquid.map(([base]) => base));
+    const early = quoted
+      .filter(([base, q]) => q.qvol24 >= RULES.minQuoteVolume24h && !taken.has(base) && earlyOk(base)
+                              && !cooling(base, RULES.cooldownMs) && moveFrom(agoEarly, base, q) >= RULES.early.prefilterMove)
+      .sort((x, y) => moveFrom(agoEarly, y[0], y[1]) - moveFrom(agoEarly, x[0], x[1]))
+      .slice(0, BUDGET.maxCandidatesPerScan - liquid.length);
 
+    // Spike and early alerts share maxAlertsPerScan (subrequest budget).
     let alerts = 0, shadows = 0;
     // News feeds: fetched at most once per scan, and only if a live alert fires.
     let feedsP: Promise<Feeds> | null = null;
@@ -113,18 +126,35 @@ async function scan(env: Env, now: number) {
       if (f.failed.length) console.log("news feeds failed:", f.failed.join("; "));
       return f;
     }));
-    for (const [base, q] of [...liquid, ...micro]) {
-      const shadow = q.qvol24 < RULES.minQuoteVolume24h;
-      if (shadow ? shadows >= BUDGET.maxShadowPerScan : alerts >= BUDGET.maxAlertsPerScan) continue;
+    const candidates = [
+      ...liquid.map(([base, q]) => ({ base, q, mode: "spike" as const })),
+      ...early.map(([base, q]) => ({ base, q, mode: "early" as const })),
+      ...micro.map(([base, q]) => ({ base, q, mode: "micro" as const })),
+    ];
+    for (const { base, q, mode } of candidates) {
+      if (mode === "micro" ? shadows >= BUDGET.maxShadowPerScan : alerts >= BUDGET.maxAlertsPerScan) continue;
       const e = byBase.get(base)!;
+      const avg = b.avg_daily_volume[base];
       try {
-        const candles = await fetchCandles(e, 1, now - (RULES.windowMin + 1) * 60_000);
-        const chk = evaluateSpike(candles, q.price, b.avg_daily_volume[base], now);
-        console.log(`candidate ${base} ${e.exchange}${shadow ? " (micro)" : ""}: ${chk.ok ? "SPIKE" : chk.reasons.join(", ")}`);
+        const windowMin = mode === "early" ? RULES.early.windowMin : RULES.windowMin;
+        const candles = await fetchCandles(e, 1, now - (windowMin + 1) * 60_000);
+        if (mode !== "early") {
+          const chk = evaluateSpike(candles, q.price, avg, now);
+          console.log(`candidate ${base} ${e.exchange}${mode === "micro" ? " (micro)" : ""}: ${chk.ok ? "SPIKE" : chk.reasons.join(", ")}`);
+          if (chk.ok) {
+            if (mode === "micro") { await shadowAlert(env, e, q, chk, now); shadows++; }
+            else { await fireAlert(env, e, q, chk, now, feeds); alerts++; }
+            await st.markAlert(base, now);
+            continue;
+          }
+          if (mode === "micro" || !earlyOk(base)) continue;
+        }
+        const chk = evaluateSpike(candles, q.price, avg, now, EARLY_RULE);
+        console.log(`candidate ${base} ${e.exchange} (early): ${chk.ok ? "EARLY" : chk.reasons.join(", ")}`);
         if (!chk.ok) continue;
-        if (shadow) { await shadowAlert(env, e, q, chk, now); shadows++; }
-        else { await fireAlert(env, e, q, chk, now, feeds); alerts++; }
-        await st.markAlert(base, now);
+        await earlyAlert(env, e, q, chk, now);
+        alerts++;
+        await st.markAlert(`early:${base}`, now);
       } catch (err) {
         console.log(`candidate ${base}: ${err}`);
       }
@@ -155,6 +185,32 @@ async function shadowAlert(env: Env, e: UniverseEntry, q: Quote, chk: ReturnType
   await telegram(env, formatMicroAlert({
     symbol: e.base, exchange: e.exchange, move30: chk.move, volMultiple: chk.volMultiple, price: q.price, high: chk.high,
     vol24h: q.qvol24, costPct, size: row.size_usd, lv,
+  }));
+}
+
+/** Early warning (+8% in 15 min, coins >= $1M): stored with kind = 'early' and graded like an
+ *  alert, sent marked EARLY, no enrichment calls. price_30m_ago / high_30m / move_30m hold the
+ *  15-minute window's values. Measures whether alerting earlier pays after costs. */
+async function earlyAlert(env: Env, e: UniverseEntry, q: Quote, chk: ReturnType<typeof evaluateSpike>, now: number) {
+  const lv = levels(q.price, chk.priceAgo);
+  const { spreadPct, costPct } = tradeCost(q.bid, q.ask, e.exchange);
+  const liquidity = liquidityLabel(q.qvol24);
+  const row = {
+    symbol: e.base, exchange: e.exchange, pair_id: e.id, fired_at: new Date(now).toISOString(), kind: "early", shadow: false,
+    price_at_alert: q.price, price_30m_ago: chk.priceAgo, high_30m: chk.high,
+    move_30m: Math.round(chk.move * 100_000) / 1000, vol_multiple: Math.round(chk.volMultiple * 100) / 100,
+    liquidity_label: liquidity, vol_24h: Math.round(q.qvol24), spread_pct: spreadPct, cost_pct: costPct,
+    size_usd: positionSize(q.price, lv.stop, +env.CAPITAL_USD, +env.RISK_PCT, +env.MAX_POSITION_PCT),
+    stop: lv.stop, take_profit: lv.takeProfit,
+  };
+  if (hasSupabase(env)) {
+    await sb(env, "spike_alerts", { method: "POST", body: JSON.stringify(row), headers: { Prefer: "return=minimal" } })
+      .catch(err => console.log("store early alert failed:", String(err)));
+  }
+  console.log(`early alert ${e.base} ${e.exchange}: +${row.move_30m}% in 15 min, vol ${row.vol_multiple}x`);
+  await telegram(env, formatEarlyAlert({
+    symbol: e.base, exchange: e.exchange, move15: chk.move, volMultiple: chk.volMultiple, price: q.price, high: chk.high,
+    liquidity, vol24h: q.qvol24, costPct, size: row.size_usd, lv,
   }));
 }
 
@@ -231,7 +287,7 @@ async function baselineCron(env: Env, now: number) {
   await baselineStep(env, now);
   if (hasSupabase(env)) {
     const rows: GradedRow[] = await sb(env,
-      "spike_alerts?graded_complete=eq.true&select=liquidity_label,has_news,shadow,ret_15,ret_30,ret_60,ret_240,net_60,net_60_real,hit_tp_first,hit_stop_first");
+      "spike_alerts?graded_complete=eq.true&select=kind,liquidity_label,has_news,shadow,ret_15,ret_30,ret_60,ret_240,net_60,net_60_real,hit_tp_first,hit_stop_first");
     const day = new Date(now).toISOString().slice(0, 10);
     await sb(env, "spike_scoreboard?on_conflict=day,segment", {
       method: "POST", body: JSON.stringify(scoreboard(day, rows)),

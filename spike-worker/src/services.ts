@@ -103,7 +103,7 @@ export async function priorSpikes(env: Env, base: string, now: number): Promise<
   if (!hasSupabase(env)) return { n: 0, avgRet60: null };
   try {
     const since = new Date(now - 90 * 86_400_000).toISOString();
-    const rows: { ret_60: number | null }[] = await sb(env, `spike_alerts?symbol=eq.${base}&fired_at=gte.${since}&select=ret_60`);
+    const rows: { ret_60: number | null }[] = await sb(env, `spike_alerts?symbol=eq.${base}&kind=eq.spike&fired_at=gte.${since}&select=ret_60`);
     const r60 = rows.map(r => r.ret_60).filter((x): x is number => x != null);
     return { n: rows.length, avgRet60: r60.length ? r60.reduce((s, x) => s + x, 0) / r60.length : null };
   } catch {

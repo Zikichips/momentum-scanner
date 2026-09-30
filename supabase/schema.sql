@@ -216,3 +216,8 @@ alter table spike_alerts add constraint spike_alerts_liquidity_label_check
   check (liquidity_label in ('micro','thin','ok','liquid'));
 alter table spike_scoreboard add column if not exists mean_net_60_real double precision;
 alter table spike_scoreboard add column if not exists median_net_60_real double precision;
+
+-- Early-warning alerts (also in supabase/migrations/2026-09-30_spike_early_warning.sql)
+alter table spike_alerts add column if not exists kind text not null default 'spike';  -- 'early': price_30m_ago / high_30m / move_30m hold the 15-minute window's values
+alter table spike_alerts drop constraint if exists spike_alerts_kind_check;
+alter table spike_alerts add constraint spike_alerts_kind_check check (kind in ('spike','early'));

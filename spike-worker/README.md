@@ -6,7 +6,7 @@ Runs on the Workers **Free** plan. No VPS, and no dependency on GitHub Actions.
 
 | Cron | Job |
 |---|---|
-| `* * * * *` | **scan**: fetch quotes for the universe (1 Kraken + 1 Coinbase call), store the minute's prices in the Durable Object, check spikes, alert |
+| `* * * * *` | **scan**: fetch quotes for the universe (1 Kraken + 1 Coinbase call), store the minute's prices in the Durable Object, check spikes and early warnings, alert |
 | `*/10 * * * *` | **grade**: fill `ret_15/30/60/240`, `mfe_240`/`mae_240`, TP-or-stop-first, `net_60` for alerts until 240 min have passed |
 | `0 4 * * *` | **baseline**: start the daily universe + 30-day volume baseline rebuild; write `spike_scoreboard` |
 
@@ -20,6 +20,7 @@ Storage: **Durable Object (SQLite)** for the rolling window, cooldowns and rebui
   - `price_now / price_30min_ago − 1 ≥ 0.15`
   - `volume_last_30min ≥ 5 × (30-day average daily volume / 48)`
   - `price_now ≥ 0.97 × high_last_30min`
+- **Early warning:** for coins ≥ $1M/day, all of `price_now / price_15min_ago − 1 ≥ 0.08`, `volume_last_15min ≥ 5 × (30-day average daily volume / 96)` and `price_now ≥ 0.97 × high_last_15min`. Sent as a short `EARLY` message (move, volume, liquidity, estimated round-trip cost, levels, no news/Reddit/prior-spike calls), stored with `kind = 'early'` and graded like an alert, with `stop = max(price_15min_ago, price_now × 0.87)`. For these rows `price_30m_ago`, `high_30m` and `move_30m` hold the 15-minute values. The point is to find out whether alerting earlier pays after costs. Early warnings have their own 4-hour cooldown, so a coin can get an EARLY alert and then a full SPIKE alert; once it has spiked, no early warning follows. Candidates come from a +6% prefilter on the ~15-minute-old snapshot and use whatever candle budget the spike candidates leave; spike candidates that miss +15% are checked for an early warning on the candles already fetched.
 - **Cooldown:** one alert per base symbol per 4 hours.
 - **Liquidity label:** micro < $1M (shadow, sent marked MICRO) · thin < $2M · ok $2–20M · liquid > $20M (24h quote volume).
 - **Suggested levels:** size = `position_size()` from the Python scanner (5% of `CAPITAL_USD` at risk, capped at 50%); stop = `max(price_30min_ago, price_now × 0.87)`; TP = `price_now + 1.5 × (price_now − stop)`.
@@ -29,7 +30,7 @@ Storage: **Durable Object (SQLite)** for the rolling window, cooldowns and rebui
 - **News 6h:** without a CryptoPanic token, headlines come from the CoinDesk, Cointelegraph, Decrypt and The Block RSS feeds. They're fetched once per minute, only when a live alert fires. A headline counts if it mentions the coin's Coinbase name (whole word; ordinary-word names like "Trump" or "Near" are skipped), its ticker in capitals (3+ letters, not an acronym like SEC or ETF), or `$TICKER` / `(TICKER)`. The alert shows the newest match from the last 6 hours with its source. `has_news` is unknown only if every feed fails. Small coins rarely make these outlets, so "none" is common and means "not in major crypto media". Check from Cloudflare with `/news?base=BTC`.
 - **Scoreboard (daily):** count, mean and median of each return and `net_60`, % TP first, % stop first. Given overall, by liquidity label, and by news (`yes` / `no` / `unknown` when CryptoPanic isn't configured).
 
-The overall, liquidity and news segments cover full alerts; `liquidity:micro` covers the shadow (micro) alerts.
+The overall, liquidity and news segments cover full spike alerts; `liquidity:micro` covers the shadow (micro) alerts; `early` covers the early warnings.
 
 All thresholds live in `src/config.ts`.
 
@@ -48,7 +49,7 @@ These are the Workers Free limits as understood at build time. Check them agains
 |---|---|---|
 | Worker invocations | 1/min scan + 0.1/min grade + 1/day ≈ **1,585/day** | 100,000/day |
 | External subrequests, scan (steady state) | **2** (Kraken Ticker + Coinbase products) | 50 per invocation |
-| External subrequests, scan (worst case) | 2 + 8 candidate candle fetches + 4 news feeds (once) + 3 alerts × 7 (hourly candles, Reddit ×3, prior spikes, Supabase insert, Telegram) + 4 micro candle fetches + 2 shadow alerts × 2 (Supabase insert, Telegram) + 5 baseline fetches (during a rebuild) = **48** | 50 per invocation |
+| External subrequests, scan (worst case) | 2 + 8 candidate candle fetches (spike and early) + 4 news feeds (once) + 3 alerts × 7 (early alerts count toward the 3 and cost 2) (hourly candles, Reddit ×3, prior spikes, Supabase insert, Telegram) + 4 micro candle fetches + 2 shadow alerts × 2 (Supabase insert, Telegram) + 5 baseline fetches (during a rebuild) = **48** | 50 per invocation |
 | External subrequests, grade | 1 + 20 × (candles + update) = **≤ 41** | 50 per invocation |
 | Exchange APIs | Kraken 1–15 calls/min, Coinbase 1–15 calls/min | Kraken public ≈ 1/s; Coinbase public 10/s |
 | KV | 2 reads/min (**2,880/day**); **2 writes/day** | 100,000 reads, 1,000 writes/day |

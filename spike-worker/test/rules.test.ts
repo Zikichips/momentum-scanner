@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  evaluateSpike, formatAlert, formatMicroAlert, gradePath, levels, liquidityLabel, positionSize, scoreboard, tradeCost, type Candle,
+  EARLY_RULE, evaluateSpike, formatAlert, formatEarlyAlert, formatMicroAlert, gradePath, levels, liquidityLabel, positionSize, scoreboard, tradeCost, type Candle,
 } from "../src/rules";
 import {
   mergeUniverse, parseCoinbaseCandles, parseCoinbasePage, parseKrakenOhlc, parseKrakenPairs, parseKrakenTicker,
@@ -41,6 +41,28 @@ describe("evaluateSpike", () => {
   });
   it("needs a baseline", () => {
     expect(evaluateSpike(ramp(100, 120, 20), 120, 0, NOW).ok).toBe(false);
+  });
+});
+
+describe("evaluateSpike, early rule (15 min)", () => {
+  // Baseline 4,800/day -> 50 per 15 min; 16 bars × 20 = 320 -> 6.4×.
+  it("fires on +8% in 15 minutes, below the 30-minute spike threshold", () => {
+    const c = ramp(100, 112, 20);                        // +12% in 30 min: no spike
+    expect(evaluateSpike(c, 112, 4800, NOW).ok).toBe(false);
+    const r = evaluateSpike(c, 112, 4800, NOW, EARLY_RULE);   // 15 min ago: 106 -> +5.7%
+    expect(r.reasons).toEqual([expect.stringMatching(/^move/)]);
+    const fast = ramp(100, 120, 20);                     // 15 min ago: 110 -> +9.1%
+    const f = evaluateSpike(fast, 120, 4800, NOW, EARLY_RULE);
+    expect(f.ok).toBe(true);
+    expect(f.priceAgo).toBeCloseTo(110, 6);
+    expect(f.volMultiple).toBeCloseTo(6.4, 6);
+  });
+  it("measures volume against the 15-minute share of the daily baseline", () => {
+    expect(evaluateSpike(ramp(100, 120, 10), 120, 4800, NOW, EARLY_RULE).reasons).toEqual([expect.stringMatching(/^vol 3\.2x/)]);
+  });
+  it("rejects a window that starts more than 3 minutes late", () => {
+    const c = ramp(100, 120, 20).filter(x => x.t >= NOW - 11 * MIN);
+    expect(evaluateSpike(c, 120, 4800, NOW, EARLY_RULE).reasons).toEqual(["window starts late"]);
   });
 });
 
@@ -115,6 +137,22 @@ describe("formatMicroAlert", () => {
   });
 });
 
+describe("formatEarlyAlert", () => {
+  it("flags the alert as early and unconfirmed", () => {
+    const text = formatEarlyAlert({
+      symbol: "AVT", exchange: "coinbase", move15: 0.087, volMultiple: 6.2, price: 0.3056, high: 0.3327,
+      liquidity: "thin", vol24h: 1_642_857, costPct: 2.9, size: 250, lv: levels(0.3056, 0.2811),
+    });
+    expect(text.split("\n")).toEqual([
+      "EARLY — AVT   Coinbase",
+      "+8.7% in 15 min · vol 6.2× · now 0.3056 (15m high 0.3327)",
+      "liquidity thin ($1.6M/24h) · round-trip cost ~2.9%",
+      "Not yet a confirmed spike (+15% in 30 min). Early alerts are scored separately.",
+      "Size $250 · stop 0.2811 (−8.0%) · TP 0.3423 (+12.0%)",
+    ]);
+  });
+});
+
 describe("gradePath", () => {
   const fired = NOW;
   const bars = (closes: number[], hi = 0, lo = 0): Candle[] =>
@@ -163,6 +201,17 @@ describe("scoreboard", () => {
     expect([by["news:yes"].n, by["news:no"].n, by["news:unknown"].n]).toEqual([1, 1, 1]);   // shadow excluded
     expect(by["liquidity:micro"].n).toBe(1);
     expect(by["liquidity:micro"].mean_net_60_real).toBe(6);
+  });
+  it("keeps early alerts out of the spike segments", () => {
+    const row = (kind: "spike" | "early" | undefined, ret_60: number) => ({
+      kind, liquidity_label: "ok" as const, has_news: false, ret_15: 1, ret_30: 1, ret_60, ret_240: 1, net_60: ret_60 - 1.5,
+      hit_tp_first: false, hit_stop_first: false,
+    });
+    const by = Object.fromEntries(scoreboard("2026-09-30", [row(undefined, 2), row("spike", 4), row("early", -3), row("early", 5)])
+      .map(r => [r.segment, r]));
+    expect([by.overall.n, by["liquidity:ok"].n, by["news:no"].n, by["liquidity:micro"].n]).toEqual([2, 2, 2, 0]);
+    expect(by.early.n).toBe(2);
+    expect(by.early.mean_ret_60).toBe(1);
   });
 });
 

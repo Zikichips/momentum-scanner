@@ -15,6 +15,17 @@ export const RULES = {
   costsPct: 1.5,                  // net_60 = ret_60 − this (percentage points)
   gradeHorizonsMin: [15, 30, 60, 240] as const,
   liquidity: { thin: 2_000_000, liquid: 20_000_000 },   // micro < $1M (shadow), thin < $2M, ok $2–20M, liquid > $20M
+  // Early warning: a smaller, faster move on the same volume and near-high tests, for coins >= $1M.
+  // Stored with kind = 'early', sent marked EARLY, graded and scored separately from spikes.
+  early: {
+    windowMin: 15,
+    minMove: 0.08,                // price_now / price_15min_ago − 1
+    prefilterMove: 0.06,          // cheap check on minute snapshots before fetching candles
+    volumeMultiple: 5,            // volume_last_15min ≥ this × (30-day avg daily volume / 96)
+    nearHigh: 0.97,               // price_now ≥ this × high_last_15min
+    maxLateMin: 3,                // window must start within this many minutes of the 15-minute mark
+    cooldownMs: 4 * 3600_000,     // one early alert per base symbol per 4 hours (separate from the spike cooldown)
+  },
   baselineDays: 30,
   minBaselineDays: 20,            // fewer complete daily bars than this (new listing) -> no baseline, no alert
 };
@@ -33,7 +44,7 @@ export const TAKER_FEE_PCT: Record<"kraken" | "coinbase", number> = { kraken: 0.
 // Per-invocation budgets, sized to stay under the Workers Free limit of 50 external subrequests.
 export const BUDGET = {
   maxCandidatesPerScan: 8,        // 1-min candle fetches to confirm a spike (coins >= $1M; checked first)
-  maxAlertsPerScan: 3,            // each alert costs up to 8 subrequests (enrichment + store + Telegram)
+  maxAlertsPerScan: 3,            // spike + early alerts; a spike costs up to 7 subrequests, an early alert 2 (store + Telegram)
   maxMicroCandidatesPerScan: 4,   // extra candle fetches for micro coins (shadow mode)
   maxShadowPerScan: 2,            // each shadow alert costs 2 subrequests (store + Telegram)
   baselineFetchesPerTick: 5,      // daily-candle fetches per scan tick while the baseline job runs
