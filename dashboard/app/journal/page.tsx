@@ -27,6 +27,14 @@ export default function JournalPage() {
     load();
   };
 
+  const remove = async (r: Journal) => {
+    if (!window.confirm(`Delete the ${r.symbol} trade opened ${fmtDate(r.opened_at)}? This can't be undone.`)) return;
+    // .select() returns the deleted rows, so a delete blocked by row-level security shows up as 0 rows.
+    const { data, error } = await supabase.from("journal").delete().eq("id", r.id).select("id");
+    if (error || !data?.length) window.alert(`Couldn't delete: ${error?.message ?? "not permitted (check the journal delete policy)"}`);
+    load();
+  };
+
   const closed = rows.filter(r => r.pnl_usd != null);
   const total = closed.reduce((s, r) => s + (r.pnl_usd ?? 0), 0);
   const wins = closed.filter(r => (r.pnl_usd ?? 0) > 0).length;
@@ -53,7 +61,7 @@ export default function JournalPage() {
       </form>
       <div className="wrap">
         <table>
-          <thead><tr><th>Opened</th><th>Symbol</th><th>Entry</th><th>Exit</th><th>Size</th><th>P&L</th><th>%</th><th>Rules</th><th>Note</th></tr></thead>
+          <thead><tr><th>Opened</th><th>Symbol</th><th>Entry</th><th>Exit</th><th>Size</th><th>P&L</th><th>%</th><th>Rules</th><th>Note</th><th></th></tr></thead>
           <tbody>
             {rows.map(r => (
               <tr key={r.id}>
@@ -62,6 +70,7 @@ export default function JournalPage() {
                 <td className={(r.pnl_usd ?? 0) >= 0 ? "up" : "down"}>{r.pnl_usd == null ? "–" : `$${r.pnl_usd.toFixed(0)}`}</td>
                 <td className={(r.pnl_pct ?? 0) >= 0 ? "up" : "down"}>{r.pnl_pct == null ? "–" : `${r.pnl_pct.toFixed(1)}%`}</td>
                 <td>{r.followed_rules == null ? "–" : r.followed_rules ? "✓" : "✗"}</td><td className="muted">{r.note}</td>
+                <td><button type="button" className="del" onClick={() => remove(r)} aria-label={`Delete ${r.symbol} trade`}>Delete</button></td>
               </tr>
             ))}
           </tbody>

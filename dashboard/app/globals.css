@@ -20,3 +20,5 @@ th { color:var(--muted); font-weight:500; }
 form { display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:8px; margin-bottom:16px; }
 input, button, select { padding:8px; border:1px solid var(--line); border-radius:6px; background:var(--bg); color:var(--fg); }
 button { cursor:pointer; }
+button.del { padding:4px 8px; font-size:13px; color:var(--down); background:transparent; }
+button.del:hover { border-color:var(--down); }

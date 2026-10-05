@@ -146,10 +146,11 @@ create policy "anon read journal" on journal for select to anon using (true);
 create policy "anon read catalysts" on catalysts for select to anon using (true);
 create policy "anon read footprints" on footprints for select to anon using (true);
 create policy "anon read scoreboard" on scoreboard_daily for select to anon using (true);
--- Journal writes from the dashboard: allow anon insert/update on journal only.
+-- Journal writes from the dashboard: allow anon insert/update/delete on journal only.
 -- (Tighten to authenticated users once you add Supabase Auth to the dashboard.)
 create policy "anon write journal" on journal for insert to anon with check (true);
 create policy "anon update journal" on journal for update to anon using (true);
+create policy "anon delete journal" on journal for delete to anon using (true);
 
 -- ---------------------------------------------------------------- spike detector (spike-worker/)
 -- One row per spike alert. Detection and measurement only: size/stop/take_profit are suggestions.
