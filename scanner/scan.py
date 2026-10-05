@@ -29,7 +29,11 @@ def _bo_from_row(r: dict) -> Breakout:
 def universe() -> list[tuple[str, str]]:
     out = []
     if CFG["universe"]["crypto"]["enabled"]:
-        out += [(s, "crypto") for s in data.crypto_universe()]
+        rows = data.crypto_universe_with_volume()
+        print(f"universe: {len(rows)} crypto pairs (24h quote volume)")
+        for i, (s, qv) in enumerate(rows, 1):
+            print(f"  {i:>3}. {s:<12} ${qv:>15,.0f}")
+        out += [(s, "crypto") for s, _ in rows]
     if CFG["universe"]["stocks"]["enabled"]:
         out += [(s, "stock") for s in data.stock_universe()]
     return out
@@ -117,22 +121,27 @@ def stage_b(store: Store) -> int:
 
 # ------------------------------------------------------------------ Exits
 def manage_exits(store: Store) -> int:
-    """Alert when an open setup hits stop / T1 / T2 on a closed bar."""
+    """Alert when an open setup hits stop / T1 / T2 on a closed bar. Each notice is sent once:
+    a marker goes into the alert's notes (the outcome itself is only set by the daily grader)."""
     n = 0
     ex = data._exchange() if CFG["universe"]["crypto"]["enabled"] else None
     for a in store.open_alerts():
+        notes = a.get("notes") or ""
+        if "STOP notified" in notes or "T2 notified" in notes:   # exit already sent; wait for the grader
+            continue
         try:
             df = data.ohlcv(a["symbol"], a["asset_class"], CFG["timeframes"]["intraday"], limit=50, ex=ex)
             last = df.iloc[-1]
             hi, lo, close = float(last["high"]), float(last["low"]), float(last["close"])
             if close < a["stop"]:
-                notify.send(notify.format_exit(a, "STOP hit — exit", close)); n += 1
+                notify.send(notify.format_exit(a, "STOP hit — exit", close))
+                store.update("alerts", a["id"], {"notes": notes + " | STOP notified"}); n += 1
             elif hi >= a["target2"]:
-                notify.send(notify.format_exit(a, "T2 reached — exit remainder", hi)); n += 1
-            elif hi >= a["target1"] and not a.get("t1_notified"):
+                notify.send(notify.format_exit(a, "T2 reached — exit remainder", hi))
+                store.update("alerts", a["id"], {"notes": notes + " | T2 notified"}); n += 1
+            elif hi >= a["target1"] and "T1 notified" not in notes and "T1 hit" not in notes:
                 notify.send(notify.format_exit(a, "T1 reached — take half, stop to entry", hi))
-                store.update("alerts", a["id"], {"notes": (a.get("notes") or "") + " | T1 hit"})
-                n += 1
+                store.update("alerts", a["id"], {"notes": notes + " | T1 notified"}); n += 1
         except Exception as e:
             print(f"[exits] {a['symbol']}: {e}")
     return n

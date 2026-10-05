@@ -23,6 +23,11 @@ def _exchange():
 
 def crypto_universe(ex=None) -> list[str]:
     """Top-N spot pairs by 24h quote volume, quoted in the configured currency."""
+    return [s for s, _ in crypto_universe_with_volume(ex)]
+
+
+def crypto_universe_with_volume(ex=None) -> list[tuple[str, float]]:
+    """crypto_universe() with each pair's 24h quote volume, busiest first."""
     ex = ex or _exchange()
     u = CFG["universe"]["crypto"]
     quote, excl, n = u["quote"], set(u["exclude"]), u["top_n_by_volume"]
@@ -37,7 +42,7 @@ def crypto_universe(ex=None) -> list[str]:
         qv = t.get("quoteVolume") or 0
         rows.append((sym, qv))
     rows.sort(key=lambda r: r[1], reverse=True)
-    return [s for s, _ in rows[:n]]
+    return rows[:n]
 
 
 def closed_bars(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:

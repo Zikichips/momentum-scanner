@@ -164,6 +164,13 @@ async function scan(env: Env, now: number) {
   await baselineStep(env, now);   // no-op unless the daily rebuild is running
 }
 
+/** Spike / early / micro alerts go to Telegram unless TELEGRAM_ALERTS is "off" (they are still
+ *  stored and graded). The daily heartbeat calls telegram() directly and is never muted. */
+async function alertTelegram(env: Env, text: string): Promise<void> {
+  if (env.TELEGRAM_ALERTS === "off") { console.log("[telegram alerts muted]"); return; }
+  await telegram(env, text);
+}
+
 /** Micro coin (< $1M/day) spike: stored and graded like an alert, and sent to Telegram marked
  *  MICRO, but with no enrichment calls. Measures whether thin-coin spikes pay after real costs. */
 async function shadowAlert(env: Env, e: UniverseEntry, q: Quote, chk: ReturnType<typeof evaluateSpike>, now: number) {
@@ -182,7 +189,7 @@ async function shadowAlert(env: Env, e: UniverseEntry, q: Quote, chk: ReturnType
       .catch(err => console.log("store shadow alert failed:", String(err)));
   }
   console.log(`shadow alert ${e.base} ${e.exchange}: +${row.move_30m}% vol ${row.vol_multiple}x, spread ${spreadPct}%`);
-  await telegram(env, formatMicroAlert({
+  await alertTelegram(env, formatMicroAlert({
     symbol: e.base, exchange: e.exchange, move30: chk.move, volMultiple: chk.volMultiple, price: q.price, high: chk.high,
     vol24h: q.qvol24, costPct, size: row.size_usd, lv,
   }));
@@ -208,7 +215,7 @@ async function earlyAlert(env: Env, e: UniverseEntry, q: Quote, chk: ReturnType<
       .catch(err => console.log("store early alert failed:", String(err)));
   }
   console.log(`early alert ${e.base} ${e.exchange}: +${row.move_30m}% in 15 min, vol ${row.vol_multiple}x`);
-  await telegram(env, formatEarlyAlert({
+  await alertTelegram(env, formatEarlyAlert({
     symbol: e.base, exchange: e.exchange, move15: chk.move, volMultiple: chk.volMultiple, price: q.price, high: chk.high,
     liquidity, vol24h: q.qvol24, costPct, size: row.size_usd, lv,
   }));
@@ -254,7 +261,7 @@ async function fireAlert(env: Env, e: UniverseEntry, q: Quote, chk: ReturnType<t
   } else {
     console.log("[supabase disabled] alert row", JSON.stringify(row));
   }
-  await telegram(env, text);
+  await alertTelegram(env, text);
 }
 
 // ------------------------------------------------------------------ grade (every 10 minutes)

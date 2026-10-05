@@ -13,8 +13,8 @@ universe:
     enabled: true
     exchange: kraken         # ccxt exchange id; kraken is Canada-friendly and needs no API key for public data
     quote: USD
-    top_n_by_volume: 150     # scan the N most liquid pairs
-    exclude: [USDT, USDC, DAI, TUSD, PYUSD, EUR, GBP, CAD]   # stablecoins / fiat pairs
+    top_n_by_volume: 30      # scan the N most liquid pairs
+    exclude: [USDT, USDC, DAI, TUSD, PYUSD, EUR, GBP, CAD, AUD, JPY, CHF]   # stablecoins / fiat pairs
   stocks:
     enabled: false           # flip on in week 2
     tickers_file: data/stock_universe.txt
@@ -26,7 +26,7 @@ timeframes:
 # Entry types. Both are graded separately; remove one to disable it.
 #   pullback: wait for Stage B (controlled pullback on hourly bars)
 #   breakout: buy the close of the Stage A breakout day
-entries: [pullback, breakout]
+entries: [breakout, pullback]
 
 # Stage A — breakout detection (daily bars)
 breakout:

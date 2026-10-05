@@ -103,4 +103,23 @@ assert st["taken"] == 2 and st["skipped"] == 1 and rows[2]["taken"] is False and
 _, st = apply_portfolio(fake, 1000, None, 50, 0.3)
 assert st["taken"] == 3 and st["skipped"] == 0
 print("Concurrency OK ->", st)
+
+# Exit notices are sent once, not every 15-minute scan (STOP / T1 / T2).
+CFG["account"]["max_concurrent_trades"] = None
+last = hist.iloc[-1]
+sent = []
+scan.notify.send = sent.append
+for sym, stop, t1, t2 in (("STOPX/USD", last["close"] * 2, last["close"] * 3, last["close"] * 4),
+                          ("T1X/USD", last["close"] * 0.5, last["high"] * 0.99, last["high"] * 10),
+                          ("T2X/USD", last["close"] * 0.5, last["high"] * 0.8, last["high"] * 0.9)):
+    scan._insert_alert(store, Setup(symbol=sym, asset_class="crypto", entry=float(last["close"]), stop=float(stop),
+                                    target1=float(t1), target2=float(t2), reward_risk=2.0, position_usd=100.0,
+                                    retrace_pct=0.0, ema_value=None, pullback_low=None, entry_type="breakout"), None)
+scan.manage_exits(store)
+first = [m for m in sent if any(k in m for k in ("STOPX", "T1X", "T2X"))]
+assert len(first) == 3, first
+sent.clear()
+scan.manage_exits(store)
+assert not [m for m in sent if any(k in m for k in ("STOPX", "T1X", "T2X"))], sent
+print("Exit notices OK -> one each, no repeats")
 print("ALL OK")

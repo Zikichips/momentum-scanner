@@ -9,7 +9,7 @@ export const RULES = {
   prefilterMove: 0.13,            // cheap check on minute snapshots before fetching candles
   volumeMultiple: 5,              // volume_last_30min ≥ this × (30-day avg daily volume / 48)
   nearHigh: 0.97,                 // price_now ≥ this × high_last_30min
-  cooldownMs: 4 * 3600_000,       // one alert per base symbol per 4 hours
+  cooldownMs: 24 * 3600_000,      // one alert per base symbol per 24 hours
   stopFloor: 0.87,                // stop = max(price_30min_ago, price_now × this)
   tpMultiple: 1.5,                // take_profit = price_now + this × (price_now − stop)
   costsPct: 1.5,                  // net_60 = ret_60 − this (percentage points)
@@ -24,7 +24,7 @@ export const RULES = {
     volumeMultiple: 5,            // volume_last_15min ≥ this × (30-day avg daily volume / 96)
     nearHigh: 0.97,               // price_now ≥ this × high_last_15min
     maxLateMin: 3,                // window must start within this many minutes of the 15-minute mark
-    cooldownMs: 4 * 3600_000,     // one early alert per base symbol per 4 hours (separate from the spike cooldown)
+    cooldownMs: 24 * 3600_000,    // one early alert per base symbol per 24 hours (separate from the spike cooldown)
   },
   baselineDays: 30,
   minBaselineDays: 20,            // fewer complete daily bars than this (new listing) -> no baseline, no alert
@@ -58,6 +58,7 @@ export interface Env {
   RISK_PCT: string;
   MAX_POSITION_PCT: string;
   CRYPTOPANIC_URL: string;
+  TELEGRAM_ALERTS?: string;      // "off" mutes spike/early/micro alerts (still stored and graded)
   SUPABASE_URL?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
   TELEGRAM_BOT_TOKEN?: string;

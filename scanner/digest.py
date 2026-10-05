@@ -1,11 +1,27 @@
 """Daily 7am digest: upcoming catalysts, top footprints, in-play assets, scoreboard."""
 from __future__ import annotations
 from datetime import date, timedelta
+import requests
 from .db import Store
 from . import alerts as notify
 from .catalysts import main as refresh_catalysts
 from .footprints import screen
 from .outcomes import scoreboard
+
+
+def top_sectors(n: int = 3, min_market_cap: float = 1e9) -> str:
+    """Top-n CoinGecko categories by 24h market-cap change (free, no key). Categories under
+    min_market_cap are skipped so a tiny category's swing doesn't top the list."""
+    try:
+        r = requests.get("https://api.coingecko.com/api/v3/coins/categories", timeout=15)
+        r.raise_for_status()
+        cats = [c for c in r.json() if (c.get("market_cap") or 0) >= min_market_cap
+                and c.get("market_cap_change_24h") is not None]
+        cats.sort(key=lambda c: c["market_cap_change_24h"], reverse=True)
+        return " · ".join(f"{c['name'].replace('_', ' ').replace('*', '')} {c['market_cap_change_24h']:+.1f}%" for c in cats[:n]) or "none"
+    except Exception as e:  # the digest must still go out
+        print(f"[digest] sectors: {e}")
+        return "unavailable"
 
 
 def build() -> str:
@@ -17,7 +33,7 @@ def build() -> str:
     watching = store.watching()
     sb = scoreboard(store.select("alerts"))
 
-    lines = [f"*DAILY DIGEST — {date.today():%a %d %b}*", ""]
+    lines = [f"*DAILY DIGEST — {date.today():%a %d %b}*", "", f"*Top sectors (24h)*: {top_sectors()}", ""]
     lines.append("*Upcoming catalysts (14d)*")
     lines += [f"• {c['event_date']} {c['symbol']} — {c['event_type']} ({c['lean']}) {c.get('title') or ''}"[:120] for c in cats[:12]] or ["• none"]
     lines += ["", "*Footprints (unusual activity)*"]
