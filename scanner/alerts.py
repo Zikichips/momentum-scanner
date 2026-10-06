@@ -39,10 +39,11 @@ def format_skipped(s: Setup) -> str:
     )
 
 
-def format_breakout(bo) -> str:
+def format_breakout(bo, exchange: str | None = None) -> str:
+    src = f" Prices: {exchange.capitalize()} (outside the Kraken top-{CFG['universe']['crypto']['top_n_by_volume']})." if exchange else ""
     return (
         f"*IN PLAY — {bo.symbol}* broke {bo.breakout_level:.4g} on volume, "
-        f"+{bo.impulse_pct:.0f}% in {CFG['breakout']['impulse_window_days']}d. Watching for pullback."
+        f"+{bo.impulse_pct:.0f}% in {CFG['breakout']['impulse_window_days']}d. Watching for pullback.{src}"
     )
 
 

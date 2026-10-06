@@ -159,7 +159,8 @@ def main():
         if a.get("outcome") not in (None, "open") and datetime.now(timezone.utc) - fired > timedelta(days=15):
             continue
         try:
-            df = data.ohlcv(a["symbol"], a["asset_class"], CFG["timeframes"]["intraday"], limit=400, ex=ex)
+            df = data.ohlcv(a["symbol"], a["asset_class"], CFG["timeframes"]["intraday"], limit=400,
+                            ex=data.exchange_for(a.get("exchange"), ex))
             patch = grade(a, df)
             if patch:
                 store.update("alerts", a["id"], patch)

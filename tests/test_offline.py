@@ -32,7 +32,7 @@ def fake_ohlcv(symbol, asset_class, timeframe, limit=400, ex=None):
 
 data.ohlcv = fake_ohlcv
 data._exchange = lambda: None
-scan.universe = lambda: [("QNT/USD", "crypto")]
+scan.universe = lambda: [("QNT/USD", "crypto", None)]
 
 # Stage A must run on the breakout day, so first run at the breakout bar's close.
 BO_CUT = pd.Timestamp("2026-08-30 23:00:00+00:00")

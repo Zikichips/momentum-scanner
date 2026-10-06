@@ -2,7 +2,7 @@
 # Everything tunable lives here; the code reads this file at startup.
 
 account:
-  capital_usd: 500           # trading bankroll (NOT the long-term portfolio)
+  capital_usd: 300           # trading bankroll (NOT the long-term portfolio)
   risk_per_trade_pct: 5      # a stop-out costs this % of capital
   max_position_pct: 50       # never put more than this % of capital in one trade
   max_concurrent_trades: 2   # open positions at once; further setups are logged as skipped_concurrent (null = no limit)
@@ -15,6 +15,14 @@ universe:
     quote: USD
     top_n_by_volume: 30      # scan the N most liquid pairs
     exclude: [USDT, USDC, DAI, TUSD, PYUSD, EUR, GBP, CAD, AUD, JPY, CHF]   # stablecoins / fiat pairs
+    # Stage A also scans Coinbase USD pairs that are running hard, even if they're outside
+    # the Kraken top-N. These are scanned (Stage A/B, exits, grading) on Coinbase data.
+    coinbase_movers:
+      enabled: true
+      min_gain_pct: 20         # close-to-close gain over the window, on closed daily bars
+      max_gain_pct: 60         # above this it's a blow-off, not a breakout: skip
+      gain_window_days: 3
+      min_volume_usd: 5000000  # Coinbase 24h quote volume
   stocks:
     enabled: false           # flip on in week 2
     tickers_file: data/stock_universe.txt

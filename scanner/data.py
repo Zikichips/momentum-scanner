@@ -45,6 +45,52 @@ def crypto_universe_with_volume(ex=None) -> list[tuple[str, float]]:
     return rows[:n]
 
 
+_other_exchanges: dict = {}
+
+
+def exchange_for(ex_id: str | None, default=None):
+    """The exchange a symbol's prices come from. None (or the configured exchange) means
+    `default`; anything else (e.g. "coinbase" for Coinbase movers) is created once and cached."""
+    if not ex_id or ex_id == CFG["universe"]["crypto"]["exchange"]:
+        return default
+    if ex_id not in _other_exchanges:
+        import ccxt
+        ex = getattr(ccxt, ex_id)({"enableRateLimit": True})
+        ex.load_markets()
+        _other_exchanges[ex_id] = ex
+    return _other_exchanges[ex_id]
+
+
+def coinbase_movers(skip: set[str] = frozenset()) -> list[tuple[str, float, float]]:
+    """Coinbase USD pairs with 24h quote volume >= min_volume_usd that closed up between
+    min_gain_pct and max_gain_pct over the last gain_window_days closed daily bars, busiest
+    first (Stage A scans in this order, so when slots are short the busiest pair fills them).
+    Returns (symbol, 24h quote volume, gain %). Symbols in `skip` are not checked."""
+    m = CFG["universe"]["crypto"]["coinbase_movers"]
+    excl, window = set(CFG["universe"]["crypto"]["exclude"]), m["gain_window_days"]
+    cb = exchange_for("coinbase")
+    rows = []
+    for sym, t in cb.fetch_tickers().items():
+        mk = cb.markets.get(sym) or {}
+        if sym in skip or mk.get("quote") != "USD" or not mk.get("spot") or mk.get("base") in excl:
+            continue
+        qv = t.get("quoteVolume") or 0
+        if qv < m["min_volume_usd"]:
+            continue
+        try:
+            d = crypto_ohlcv(sym, "1d", limit=window + 3, ex=cb)
+        except Exception as e:
+            print(f"[coinbase_movers] {sym}: {e}")
+            continue
+        if len(d) <= window:
+            continue
+        gain = (float(d["close"].iloc[-1]) / float(d["close"].iloc[-1 - window]) - 1) * 100
+        if m["min_gain_pct"] <= gain <= m["max_gain_pct"]:
+            rows.append((sym, qv, gain))
+        time.sleep(0.05)
+    return sorted(rows, key=lambda r: r[1], reverse=True)
+
+
 def closed_bars(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
     """Drop the still-forming last bar. Exchanges return it, but the strategy must only
     see completed bars (an hour-old daily bar has a fraction of a day's volume)."""
