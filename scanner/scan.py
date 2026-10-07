@@ -61,12 +61,29 @@ def _with_exchange(row: dict, exchange: str | None) -> dict:
     return {**row, "exchange": exchange} if exchange else row
 
 
+def _is_shadow(exchange: str | None, source: str | None) -> bool:
+    """A Coinbase mover (Stage A coin from outside the Kraken top-N, not a listing) while
+    universe.crypto.coinbase_movers.shadow is on."""
+    return (exchange == "coinbase" and not source
+            and bool(CFG["universe"]["crypto"].get("coinbase_movers", {}).get("shadow")))
+
+
+def _alert_message(setup, taken: bool, exchange: str | None, source: str | None) -> str:
+    if taken:
+        return notify.format_setup(setup)
+    return notify.format_shadow(setup) if _is_shadow(exchange, source) else notify.format_skipped(setup)
+
+
 def _insert_alert(store: Store, setup, in_play_id, exchange: str | None = None, source: str | None = None) -> bool:
     """Store a new alert. At account.max_concurrent_trades open (taken) alerts it is stored
-    with taken=False: graded like any alert, but not traded. Returns True if taken."""
+    with taken=False: graded like any alert, but not traded. A shadow alert (_is_shadow) is
+    always stored with taken=False and "shadow" in its notes. Returns True if taken."""
     limit = CFG["account"].get("max_concurrent_trades")
-    taken = limit is None or len(store.open_alerts()) < limit
+    shadow = _is_shadow(exchange, source)
+    taken = not shadow and (limit is None or len(store.open_alerts()) < limit)
     row = setup.to_row(); row.pop("pullback_low")
+    if shadow:
+        row["notes"] = f"{row.get('notes') or ''} | shadow (Coinbase mover)".lstrip(" |")
     row.update({"in_play_id": in_play_id, "outcome": "open", "taken": taken,
                 "fired_at": datetime.now(timezone.utc)})
     if source:   # e.g. "listing": scored as its own group, not with Stage A pullbacks
@@ -112,7 +129,7 @@ def stage_a(store: Store) -> int:
                 setup = breakout_entry(bo, close) if "breakout" in entries_enabled() else None
                 if setup:
                     taken = _insert_alert(store, setup, ip.get("id"), src)
-                    msg += "\n\n" + (notify.format_setup(setup) if taken else notify.format_skipped(setup))
+                    msg += "\n\n" + _alert_message(setup, taken, src, None)
                 notify.send(msg)
         except Exception as e:  # one bad symbol must not kill the run
             print(f"[stage_a] {sym}: {e}")
@@ -150,7 +167,7 @@ def stage_b(store: Store) -> int:
             if setup:
                 taken = _insert_alert(store, setup, r["id"], r.get("exchange"), r.get("source"))
                 store.update("in_play", r["id"], {"status": "triggered"})
-                notify.send(notify.format_setup(setup) if taken else notify.format_skipped(setup))
+                notify.send(_alert_message(setup, taken, r.get("exchange"), r.get("source")))
                 fired += 1
         except Exception as e:
             print(f"[stage_b] {bo.symbol}: {e}")

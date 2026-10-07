@@ -39,6 +39,11 @@ def format_skipped(s: Setup) -> str:
     )
 
 
+def format_shadow(s: Setup) -> str:
+    return (f"*SHADOW SETUP — {s.symbol}* ({s.entry_type} entry at `{s.entry:.4g}`, stop `{s.stop:.4g}`, Coinbase mover): "
+            f"graded for the record, not traded.")
+
+
 def format_breakout(bo, exchange: str | None = None) -> str:
     src = f" Prices: {exchange.capitalize()} (outside the Kraken top-{CFG['universe']['crypto']['top_n_by_volume']})." if exchange else ""
     return (

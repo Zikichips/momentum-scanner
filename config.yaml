@@ -23,6 +23,10 @@ universe:
       max_gain_pct: 60         # above this it's a blow-off, not a breakout: skip
       gain_window_days: 3
       min_volume_usd: 5000000  # Coinbase 24h quote volume
+      # Shadow: their alerts are sent (marked SHADOW) and graded, but stored as not taken, so
+      # they never use a trade slot. The 90-day eval (data/movers_eval_widened.md) showed no edge
+      # and the extra trades crowded out Kraken winners. Set false to trade them.
+      shadow: true
   stocks:
     enabled: false           # flip on in week 2
     tickers_file: data/stock_universe.txt

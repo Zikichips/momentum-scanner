@@ -28,7 +28,7 @@ export default async function AlertsPage() {
                 <td>{a.source === "listing" ? "listing pullback" : a.entry_type ?? "pullback"}</td>
                 <td>{num(a.entry)}</td><td>{num(a.stop)}</td><td>{num(a.target1)}</td><td>{num(a.target2)}</td>
                 <td>{a.reward_risk.toFixed(1)}</td><td>${a.position_usd.toFixed(0)}</td>
-                <td className={a.outcome === "stop" ? "down" : a.outcome && a.outcome !== "open" && a.outcome !== "skipped_concurrent" ? "up" : "muted"}>{a.outcome === "skipped_concurrent" ? "skipped" : a.outcome ?? "open"}{a.taken === false && <span className="muted"> · not taken (max positions)</span>}{a.stale && <span className="muted"> · stale (not scored)</span>}</td>
+                <td className={a.outcome === "stop" ? "down" : a.outcome && a.outcome !== "open" && a.outcome !== "skipped_concurrent" ? "up" : "muted"}>{a.outcome === "skipped_concurrent" ? "skipped" : a.outcome ?? "open"}{a.taken === false && <span className="muted"> · {a.notes?.includes("shadow") ? "shadow (Coinbase mover)" : "not taken (max positions)"}</span>}{a.stale && <span className="muted"> · stale (not scored)</span>}</td>
                 <td className={cls(a.rule_return)}>{pct(a.rule_return)}</td>
                 <td className={cls(a.r_multiple)}>{a.r_multiple?.toFixed(2) ?? "–"}</td>
                 <td className={cls(a.hold_7d_return)}>{pct(a.hold_7d_return)}</td>

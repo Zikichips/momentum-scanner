@@ -172,6 +172,40 @@ assert all(outcomes.group_of(x) != "pullback" for x in store.select("alerts") if
 assert outcomes.scoreboard_row(sbl)["listing_n_graded"] == 1
 print("Listing alerts scored apart OK")
 
+# Shadow mode: a Coinbase mover's alerts (Stage A breakout entry, Stage B pullback) are stored
+# not taken, marked shadow, and announced as SHADOW; a listing on Coinbase prices is not shadowed.
+assert CFG["universe"]["crypto"]["coinbase_movers"]["shadow"] is True
+CFG["account"]["max_concurrent_trades"] = 2
+real_exchange_for = data.exchange_for
+data.exchange_for = lambda ex_id, default=None: default
+hist = full[full.index <= BO_CUT]
+scan._now, price["px"] = (lambda: NOW), None
+scan.universe = lambda: [("SHAD/USD", "crypto", "coinbase")]
+sent.clear()
+open_before = len(store.open_alerts())
+assert scan.stage_a(store) == 1
+sh = [x for x in store.select("alerts") if x["symbol"] == "SHAD/USD"]
+assert len(sh) == 1 and sh[0]["taken"] is False and "shadow" in sh[0]["notes"] and sh[0]["exchange"] == "coinbase", sh
+assert len(store.open_alerts()) == open_before                     # no slot used
+assert len(sent) == 1 and "SHADOW SETUP" in sent[0] and "MOMENTUM SETUP" not in sent[0], sent
+ip = [r for r in store.select("in_play") if r["symbol"] == "SHAD/USD"][0]
+assert ip["exchange"] == "coinbase" and ip["status"] == "watching"
+# Stage B on that row: pullback alert also shadow
+hist = full[full.index <= CUT]
+for r in store.watching():
+    if r["symbol"] != "SHAD/USD":
+        store.update("in_play", r["id"], {"status": "expired"})
+sent.clear()
+assert scan.stage_b(store) == 1
+pb = [x for x in store.select("alerts") if x["symbol"] == "SHAD/USD" and x["entry_type"] == "pullback"]
+assert len(pb) == 1 and pb[0]["taken"] is False and "SHADOW" in sent[0], (pb, sent)
+assert outcomes.scoreboard(store.select("alerts"))["trader"]["alerts_total"] == \
+       outcomes.scoreboard([x for x in store.select("alerts") if x["symbol"] != "SHAD/USD"])["trader"]["alerts_total"]
+# a listing on Coinbase prices is not shadow
+assert scan._is_shadow("coinbase", "listing") is False and scan._is_shadow(None, None) is False
+data.exchange_for = real_exchange_for
+print("Shadow mode OK ->", sent[0])
+
 # Stale alerts: kept, but not a position and not scored.
 CFG["account"]["max_concurrent_trades"] = 2
 before = outcomes.scoreboard(store.select("alerts"))["overall"]["alerts_total"]
