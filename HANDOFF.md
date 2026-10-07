@@ -79,7 +79,7 @@ Things likely to need fixing here (do them, don't ask):
 Repo → Settings → Secrets → Actions: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`. Optional: `CRYPTOPANIC_TOKEN`, `NEWSAPI_KEY`, `COINMARKETCAL_KEY` (each has a free tier; skip until modules 1–2 are wanted).
 Then Actions tab → `scan` → Run workflow (stage `all`) and check the log. Then `daily`.
 
-`daily.yml` runs at 07:00 Edmonton all year: it has both `0 13` (MDT) and `0 14` (MST) crons and keeps the one matching Edmonton's current offset.
+Scheduling: GitHub's cron for this repo ran hours late, so the spike worker (`spike-worker/src/dispatch.ts`, cron `1-59/5`) starts `scan.yml` every 5 minutes (stage `all` at minute 1 of each hour, `b,l` every 15 min, `l` otherwise) and `daily.yml` at 07:00 Edmonton, via workflow_dispatch with the `GH_DISPATCH_TOKEN` worker secret. `scan.yml` keeps its cron as a backup; `daily.yml` has none.
 
 ### 3.6 Dashboard on Vercel
 ```bash

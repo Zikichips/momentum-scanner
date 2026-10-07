@@ -66,5 +66,7 @@ export interface Env {
   CRYPTOPANIC_TOKEN?: string;
   REDDIT_CLIENT_ID?: string;
   REDDIT_CLIENT_SECRET?: string;
+  GH_REPO: string;               // owner/repo whose workflows the scheduler starts
+  GH_DISPATCH_TOKEN?: string;    // fine-grained PAT, this repo only, Actions: read and write
   RELAY_TOKEN?: string;          // gates /upbit-notices and /upbit-ticker (same value as the UPBIT_RELAY_TOKEN Actions secret)
 }

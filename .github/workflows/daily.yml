@@ -1,11 +1,9 @@
 name: daily
 on:
-  schedule:
-    # 07:00 Edmonton all year: 13:00 UTC in summer (MDT), 14:00 UTC in winter (MST). Both fire;
-    # the "season" step keeps the one that matches Edmonton's current offset. It goes by which
-    # cron fired, not the clock, so a run GitHub starts hours late is still kept.
-    - cron: "0 13 * * *"
-    - cron: "0 14 * * *"
+  # Started at 07:00 Edmonton (13:01 UTC in MDT, 14:01 UTC in MST) by the spike worker's
+  # scheduler (spike-worker/src/dispatch.ts): GitHub's own cron ran this 4-7 hours late. No cron
+  # here, so the digest isn't sent twice. If a schedule is ever added back, the "season" step
+  # keeps only the 13:00 or 14:00 UTC one matching Edmonton's offset.
   workflow_dispatch:
 
 jobs:

@@ -3,7 +3,8 @@
   "name": "spike-detector",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-01",
-  "triggers": { "crons": ["* * * * *", "*/10 * * * *", "0 4 * * *"] },
+  // "1-59/5 * * * *": starts the Python scanner's GitHub workflows (src/dispatch.ts).
+  "triggers": { "crons": ["* * * * *", "*/10 * * * *", "0 4 * * *", "1-59/5 * * * *"] },
   // Created with: npx wrangler kv namespace create SPIKE_KV
   "kv_namespaces": [{ "binding": "SPIKE_KV", "id": "2686a6296aa249e98fdd7d50a657a7eb" }],
   "durable_objects": { "bindings": [{ "name": "SPIKE_STATE", "class_name": "SpikeState" }] },
@@ -17,10 +18,13 @@
     // Paid "growth" API (the free v1 API returns 403). Only used if CRYPTOPANIC_TOKEN is set; otherwise RSS.
     "CRYPTOPANIC_URL": "https://cryptopanic.com/api/growth/v2/posts/",
     // "off": spike / early / micro alerts are stored and graded but not sent. The daily heartbeat still sends.
-    "TELEGRAM_ALERTS": "off"
+    "TELEGRAM_ALERTS": "off",
+    // Repo whose scan/daily workflows the "1-59/5" cron starts (needs the GH_DISPATCH_TOKEN secret).
+    "GH_REPO": "Zikichips/momentum-scanner"
   },
   "observability": { "enabled": true }
   // Secrets (npx wrangler secret put NAME): SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
   // TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, CRYPTOPANIC_TOKEN, REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET,
+  // GH_DISPATCH_TOKEN (fine-grained PAT, this repo only, Actions: read and write),
   // RELAY_TOKEN (gates /upbit-notices; same value as the UPBIT_RELAY_TOKEN GitHub Actions secret)
 }

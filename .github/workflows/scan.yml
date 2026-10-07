@@ -1,5 +1,7 @@
 name: scan
 on:
+  # Normally started every 5 minutes by the spike worker (spike-worker/src/dispatch.ts) with an
+  # explicit stage. This cron is only a backup: GitHub starts it hours late for this repo.
   schedule:
     - cron: "*/5 * * * *"      # every 5 min (GitHub may delay a few minutes under load)
   workflow_dispatch:

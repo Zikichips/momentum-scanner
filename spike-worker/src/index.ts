@@ -15,6 +15,7 @@ import {
 } from "./rules";
 import { hasSupabase, newsHeadline, priorSpikes, redditMentions, sb, telegram } from "./services";
 import { fetchFeeds, FEEDS, findHeadline, type Feeds } from "./news";
+import { dispatch, DISPATCH_CRON } from "./dispatch";
 import type { Job } from "./state";
 
 export { SpikeState } from "./state";
@@ -30,6 +31,7 @@ const state = (env: Env) => env.SPIKE_STATE.get(env.SPIKE_STATE.idFromName("glob
 export default {
   async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext) {
     const now = event.scheduledTime;
+    if (event.cron === DISPATCH_CRON) return dispatch(env, now);
     if (event.cron === "*/10 * * * *") return grade(env, now);
     if (event.cron === "0 4 * * *") return baselineCron(env, now);
     return scan(env, now);
