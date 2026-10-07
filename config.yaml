@@ -53,6 +53,10 @@ breakout_entry:
   t1_multiple: 1.0           # T1 = entry + this x (entry - impulse_low); take half
   t2_multiple: 2.0           # T2 = entry + this x (entry - impulse_low)
   min_reward_risk: 2.0       # R:R to T2
+  # A breakout first seen too late (or after price ran away) gets no breakout entry:
+  # it goes in play as "late", Stage B still watches it for a pullback entry.
+  max_alert_delay_hours: 4   # hours after the breakout bar closed
+  max_chase_pct: 5           # current price above the breakout close
 
 # Stage B — pullback setup (intraday bars)
 pullback:

@@ -126,6 +126,19 @@ def breakout_entry(bo: Breakout, close: float) -> Setup | None:
     )
 
 
+def late_breakout(bo: Breakout, close: float, price: float | None, now: pd.Timestamp) -> str | None:
+    """Why the breakout entry (buy the breakout close) is no longer on offer, or None.
+    Late = first seen more than max_alert_delay_hours after the breakout bar closed, or the
+    current price is more than max_chase_pct above that close. price None = time check only."""
+    e = CFG["breakout_entry"]
+    hours = (now - (pd.Timestamp(bo.breakout_date) + pd.Timedelta(days=1))).total_seconds() / 3600
+    if hours > e["max_alert_delay_hours"]:
+        return f"seen {hours:.0f}h after the breakout close"
+    if price is not None and price > close * (1 + e["max_chase_pct"] / 100):
+        return f"price {price:.4g} is {(price / close - 1) * 100:.0f}% above the breakout close {close:.4g}"
+    return None
+
+
 def entries_enabled() -> list[str]:
     return CFG.get("entries", ["pullback"])
 

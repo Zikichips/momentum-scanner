@@ -11,9 +11,13 @@ from datetime import datetime, timezone, timedelta
 import pandas as pd
 from .config import CFG
 from . import data
-from .strategy import detect_breakout, detect_pullback, breakout_entry, entries_enabled, update_impulse_high, Breakout
+from .strategy import detect_breakout, detect_pullback, breakout_entry, entries_enabled, update_impulse_high, late_breakout, Breakout
 from .db import Store
 from . import alerts as notify
+
+
+def _now() -> pd.Timestamp:
+    return pd.Timestamp.now(tz="UTC")
 
 
 def _bo_from_row(r: dict) -> Breakout:
@@ -77,9 +81,16 @@ def stage_a(store: Store) -> int:
         if sym in watching:   # same as the backtester: no new Stage A while already in play
             continue
         try:
-            daily = data.ohlcv(sym, cls, CFG["timeframes"]["daily"], limit=120, ex=data.exchange_for(src, ex))
+            rex = data.exchange_for(src, ex)
+            daily = data.ohlcv(sym, cls, CFG["timeframes"]["daily"], limit=120, ex=rex)
             bo = detect_breakout(daily, sym, cls)
             if bo and (sym, bo.breakout_date.strftime("%Y-%m-%d")) not in already:
+                close = float(daily["close"].iloc[-1])
+                try:
+                    price = data.last_price(sym, cls, rex)
+                except Exception as e:   # time check still applies
+                    print(f"[stage_a] {sym} price: {e}"); price = None
+                late = late_breakout(bo, close, price, _now())
                 # The in_play row is created even when the breakout entry fires, so the
                 # pullback entry can still trigger later. The two are graded separately.
                 ip = store.upsert("in_play", _with_exchange({
@@ -87,15 +98,18 @@ def stage_a(store: Store) -> int:
                     "breakout_date": bo.breakout_date.strftime("%Y-%m-%d"),
                     "breakout_level": bo.breakout_level, "impulse_low": bo.impulse_low,
                     "impulse_high": bo.impulse_high, "impulse_volume": bo.impulse_volume,
-                    "status": "watching",
+                    "status": "watching", "late": bool(late),
                 }, src), on_conflict="symbol,breakout_date")
+                found += 1
+                if late:   # no buy at a price that's gone; Stage B still watches for a pullback
+                    notify.send(notify.format_late(bo, late, src))
+                    continue
                 msg = notify.format_breakout(bo, src)
-                setup = breakout_entry(bo, float(daily["close"].iloc[-1])) if "breakout" in entries_enabled() else None
+                setup = breakout_entry(bo, close) if "breakout" in entries_enabled() else None
                 if setup:
                     taken = _insert_alert(store, setup, ip.get("id"), src)
                     msg += "\n\n" + (notify.format_setup(setup) if taken else notify.format_skipped(setup))
                 notify.send(msg)
-                found += 1
         except Exception as e:  # one bad symbol must not kill the run
             print(f"[stage_a] {sym}: {e}")
         time.sleep(0.05)

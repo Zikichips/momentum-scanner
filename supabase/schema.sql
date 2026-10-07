@@ -15,6 +15,7 @@ create table if not exists in_play (
   impulse_volume  double precision not null,   -- avg daily volume during impulse
   status          text not null default 'watching' check (status in ('watching','triggered','expired','failed')),
   exchange        text,                        -- price source; null = configured exchange (Kraken)
+  late            boolean not null default false,  -- first seen too late for a breakout entry; pullback only
   created_at      timestamptz not null default now(),
   updated_at      timestamptz not null default now(),
   unique (symbol, breakout_date)
@@ -37,6 +38,7 @@ create table if not exists alerts (
   ema_value       double precision,
   notes           text,
   exchange        text,                        -- price source; null = configured exchange (Kraken)
+  stale           boolean not null default false,  -- fired at a price already gone: record only, not a position, not scored
   -- Outcome fields, filled by outcomes.py
   outcome         text check (outcome in ('open','stop','t1','t2','expired','skipped_concurrent')),
   outcome_at      timestamptz,

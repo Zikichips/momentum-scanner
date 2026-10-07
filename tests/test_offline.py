@@ -37,6 +37,11 @@ scan.universe = lambda: [("QNT/USD", "crypto", None)]
 # Stage A must run on the breakout day, so first run at the breakout bar's close.
 BO_CUT = pd.Timestamp("2026-08-30 23:00:00+00:00")
 hist = full[full.index <= BO_CUT]
+# "Now" is 1h after the daily bar closed, at the closing price: an on-time breakout.
+NOW = BO_CUT + pd.Timedelta(hours=2)
+scan._now = lambda: NOW
+price = {"px": None}
+data.last_price = lambda symbol, asset_class, ex=None: price["px"] if price["px"] is not None else float(hist["close"].iloc[-1])
 store = db.Store()
 n_a = scan.stage_a(store)
 assert n_a == 1, f"expected 1 breakout, got {n_a}"
@@ -122,4 +127,45 @@ sent.clear()
 scan.manage_exits(store)
 assert not [m for m in sent if any(k in m for k in ("STOPX", "T1X", "T2X"))], sent
 print("Exit notices OK -> one each, no repeats")
+
+# Late breakouts: first seen > max_alert_delay_hours after the close, or price > max_chase_pct
+# above the close -> in_play marked late, one heads-up, no breakout-entry alert.
+hist = full[full.index <= BO_CUT]
+close = float(hist["close"].iloc[-1])
+n_alerts = len(store.select("alerts"))
+cases = (("LATE/USD", BO_CUT + pd.Timedelta(hours=6), None),               # 5h after the close
+         ("CHASE/USD", NOW, close * 1.06),                                   # on time, but +6%
+         ("EDGE/USD", BO_CUT + pd.Timedelta(hours=5), close * 1.05))       # exactly 4h, exactly +5%: on time
+for sym, now, px in cases:
+    scan._now, price["px"] = (lambda now=now: now), px
+    scan.universe = lambda sym=sym: [(sym, "crypto", None)]
+    sent.clear()
+    assert scan.stage_a(store) == 1
+    ip = [r for r in store.select("in_play") if r["symbol"] == sym][0]
+    new = [x for x in store.select("alerts") if x["symbol"] == sym]
+    if sym == "EDGE/USD":
+        assert ip["late"] is False and len(new) == 1, (ip, new)
+    else:
+        assert ip["late"] is True and ip["status"] == "watching" and not new, (ip, new)
+        assert len(sent) == 1 and "LATE BREAKOUT" in sent[0] and "\n" not in sent[0], sent
+print("Late breakouts OK ->", sent[0] if sent else "")
+# Stage B still tracks a late breakout and can fire a pullback entry on it.
+hist = full[full.index <= CUT]
+for r in store.watching():
+    if r["symbol"] not in ("LATE/USD",):
+        store.update("in_play", r["id"], {"status": "expired"})
+assert scan.stage_b(store) == 1
+assert [x["entry_type"] for x in store.select("alerts") if x["symbol"] == "LATE/USD"] == ["pullback"]
+print("Late breakout -> Stage B pullback OK")
+
+# Stale alerts: kept, but not a position and not scored.
+CFG["account"]["max_concurrent_trades"] = 2
+before = outcomes.scoreboard(store.select("alerts"))["overall"]["alerts_total"]
+st = [x for x in store.select("alerts") if x["symbol"] == "EDGE/USD"][0]
+assert any(x["id"] == st["id"] for x in store.open_alerts())
+store.update("alerts", st["id"], {"stale": True})
+assert all(x["id"] != st["id"] for x in store.open_alerts())
+assert outcomes.scoreboard(store.select("alerts"))["overall"]["alerts_total"] == before - 1
+assert any(x["id"] == st["id"] for x in store.select("alerts"))   # still on record
+print("Stale alerts OK")
 print("ALL OK")

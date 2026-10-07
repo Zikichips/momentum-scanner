@@ -91,6 +91,14 @@ def coinbase_movers(skip: set[str] = frozenset()) -> list[tuple[str, float, floa
     return sorted(rows, key=lambda r: r[1], reverse=True)
 
 
+def last_price(symbol: str, asset_class: str, ex=None) -> float | None:
+    """Latest traded price (crypto only; None for stocks)."""
+    if asset_class != "crypto":
+        return None
+    ex = ex or _exchange()
+    return float(ex.fetch_ticker(symbol)["last"])
+
+
 def closed_bars(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
     """Drop the still-forming last bar. Exchanges return it, but the strategy must only
     see completed bars (an hour-old daily bar has a fraction of a day's volume)."""

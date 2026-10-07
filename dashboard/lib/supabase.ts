@@ -10,7 +10,7 @@ export type Alert = {
   entry: number; stop: number; target1: number; target2: number; reward_risk: number;
   position_usd: number; retrace_pct: number; notes: string | null;
   entry_type: "pullback" | "breakout" | null;
-  taken: boolean | null;
+  taken: boolean | null; stale: boolean | null;
   outcome: "open" | "stop" | "t1" | "t2" | "expired" | "skipped_concurrent" | null; outcome_at: string | null;
   mfe_7d: number | null; mae_7d: number | null; hold_7d_return: number | null;
   rule_return: number | null; r_multiple: number | null;

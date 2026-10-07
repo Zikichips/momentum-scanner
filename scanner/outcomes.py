@@ -124,7 +124,8 @@ def scoreboard(alerts: list[dict]) -> dict:
     """{day, overall, pullback, breakout, trader}.
     overall / pullback / breakout judge the TOOL: every alert, including ones skipped at the
     concurrency limit. trader covers only the alerts actually taken. Alerts from before entry
-    types existed count as pullback."""
+    types existed count as pullback. Stale alerts are left out entirely."""
+    alerts = [a for a in alerts if not a.get("stale")]
     out = {"day": datetime.now(timezone.utc).date().isoformat(), "overall": _stats(alerts)}
     for t in ENTRY_TYPES:
         out[t] = _stats([a for a in alerts if (a.get("entry_type") or "pullback") == t])

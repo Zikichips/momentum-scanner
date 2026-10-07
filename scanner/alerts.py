@@ -47,5 +47,11 @@ def format_breakout(bo, exchange: str | None = None) -> str:
     )
 
 
+def format_late(bo, reason: str, exchange: str | None = None) -> str:
+    src = f" ({exchange.capitalize()})" if exchange else ""
+    return (f"*LATE BREAKOUT — {bo.symbol}*{src} broke {bo.breakout_level:.4g} on {bo.breakout_date:%d %b}, "
+            f"+{bo.impulse_pct:.0f}%; {reason}. No breakout entry, watching for pullback only.")
+
+
 def format_exit(alert: dict, reason: str, price: float) -> str:
     return f"*EXIT — {alert['symbol']}*  {reason} at `{price:.4g}` (entry {alert['entry']:.4g})"

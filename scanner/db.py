@@ -80,6 +80,8 @@ class Store:
 
     def open_alerts(self) -> list[dict]:
         """Open positions: alerts actually taken and not yet resolved (skipped ones are
-        graded but never count toward the concurrency limit or get exit notices)."""
+        graded but never count toward the concurrency limit or get exit notices). Stale
+        alerts (fired at a price that was already gone) are kept for the record only."""
         rows = self.select("alerts")
-        return [r for r in rows if r.get("outcome") in (None, "open") and r.get("taken") is not False]
+        return [r for r in rows if r.get("outcome") in (None, "open") and r.get("taken") is not False
+                and not r.get("stale")]
