@@ -5,6 +5,7 @@ Sources (all optional; each one is skipped if its key or endpoint is unavailable
   - DefiLlama unlocks   (public JSON; token unlocks -> bearish lean)
   - yfinance            (stock earnings dates -> binary)
 Extend by adding a fetch_* function that returns rows in the common shape.
+Exchange listing announcements are polled separately, every 5 minutes: see listings.py.
 """
 from __future__ import annotations
 from datetime import date, timedelta
@@ -97,7 +98,7 @@ def main():
     rows = fetch_coinmarketcal() + fetch_defillama_unlocks() + fetch_stock_earnings()
     for r in rows:
         if r.get("event_date"):
-            store.upsert("catalysts", r, on_conflict="symbol,event_date,event_type")
+            store.upsert("catalysts", r, on_conflict="symbol,event_date,event_type,source")
     print(f"catalysts: {len(rows)} rows")
     return rows
 

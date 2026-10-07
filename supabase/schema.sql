@@ -16,6 +16,7 @@ create table if not exists in_play (
   status          text not null default 'watching' check (status in ('watching','triggered','expired','failed')),
   exchange        text,                        -- price source; null = configured exchange (Kraken)
   late            boolean not null default false,  -- first seen too late for a breakout entry; pullback only
+  source          text,                        -- null = Stage A breakout; 'listing' = exchange-listing watcher
   created_at      timestamptz not null default now(),
   updated_at      timestamptz not null default now(),
   unique (symbol, breakout_date)
@@ -81,8 +82,20 @@ create table if not exists catalysts (
   title           text,
   source          text,
   source_url      text,
+  -- Exchange listings (event_type 'listing', source upbit|bithumb|binance|coinbase); null for calendar events
+  source_id          text,
+  announced_at       timestamptz,
+  detected_at        timestamptz,
+  coinbase_tradeable boolean,
+  trading_open       boolean,                  -- on the announcing exchange, when detected
+  notified           boolean,
+  price_source       text,                     -- coinbase | kraken (USD prices below)
+  price_pre          double precision,         -- last 1m close before the announcement
+  price_detect       double precision,         -- when the watcher saw it
+  price_1h           double precision,
+  price_24h          double precision,
   created_at      timestamptz not null default now(),
-  unique (symbol, event_date, event_type)
+  unique (symbol, event_date, event_type, source)
 );
 
 -- Module 2: unusual-activity flags.

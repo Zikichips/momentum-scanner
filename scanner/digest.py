@@ -28,7 +28,8 @@ def build() -> str:
     store = Store()
     refresh_catalysts()
     fps = screen()
-    cats = [c for c in store.select("catalysts") if date.fromisoformat(str(c["event_date"])[:10]) <= date.today() + timedelta(days=14)]
+    cats = [c for c in store.select("catalysts")
+            if date.today() - timedelta(days=1) <= date.fromisoformat(str(c["event_date"])[:10]) <= date.today() + timedelta(days=14)]
     cats.sort(key=lambda c: c["event_date"])
     watching = store.watching()
     sb = scoreboard(store.select("alerts"))
@@ -39,7 +40,8 @@ def build() -> str:
     lines += ["", "*Footprints (unusual activity)*"]
     lines += [f"• {f['symbol']} vol×{f['volume_multiple']} move {f['move_pct']:+.1f}% OI {f['oi_change_pct'] or '–'}% {'news' if f['has_news'] else 'NO NEWS'}" for f in fps[:8]] or ["• none"]
     lines += ["", "*In play (watching for pullback)*"]
-    lines += [f"• {w['symbol']} broke {w['breakout_level']:.4g} on {w['breakout_date']}" for w in watching] or ["• none"]
+    lines += [f"• {w['symbol']} listing on {w['breakout_date']}, pre-announcement {w['breakout_level']:.4g}" if w.get("source") == "listing"
+              else f"• {w['symbol']} broke {w['breakout_level']:.4g} on {w['breakout_date']}" for w in watching] or ["• none"]
     lines += ["", "*Scoreboard*"]
     for label in ("overall", "pullback", "breakout", "trader"):
         st = sb[label]

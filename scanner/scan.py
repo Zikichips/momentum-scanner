@@ -3,6 +3,8 @@
   python -m scanner.scan            # full scan (Stage A daily + Stage B intraday + exits)
   python -m scanner.scan --stage a  # breakouts only (cheaper; fine hourly)
   python -m scanner.scan --stage b  # pullbacks + exits only
+  python -m scanner.scan --stage l  # exchange-listing watcher only (scanner/listings.py)
+  python -m scanner.scan --stage a,l  # any comma-separated mix
 """
 from __future__ import annotations
 import argparse
@@ -130,14 +132,18 @@ def stage_b(store: Store) -> int:
                 continue
             daily = data.ohlcv(bo.symbol, bo.asset_class, CFG["timeframes"]["daily"], limit=60, ex=rex)
             bo = update_impulse_high(bo, daily)
-            # A close below breakout level = failed breakout.
-            if float(daily["close"].iloc[-1]) < bo.breakout_level:
+            # A close below breakout level = failed breakout. Only daily bars from the breakout
+            # day on count: a listing goes in play mid-day, when the last closed bar predates it.
+            if daily.index[-1] >= pd.Timestamp(bo.breakout_date) and float(daily["close"].iloc[-1]) < bo.breakout_level:
                 store.update("in_play", r["id"], {"status": "failed", "updated_at": datetime.now(timezone.utc)})
                 continue
             store.update("in_play", r["id"], {"impulse_high": bo.impulse_high, "updated_at": datetime.now(timezone.utc)})
             if "pullback" not in entries_enabled():
                 continue   # row stays "watching" until expiry, so Stage A won't re-fire meanwhile
             intraday = data.ohlcv(bo.symbol, bo.asset_class, CFG["timeframes"]["intraday"], limit=300, ex=rex)
+            if r.get("source") == "listing":   # day 0 has no closed daily bar yet: track the high on hourly bars
+                bo = update_impulse_high(bo, intraday)
+                store.update("in_play", r["id"], {"impulse_high": bo.impulse_high})
             setup = detect_pullback(intraday, bo)
             if setup:
                 taken = _insert_alert(store, setup, r["id"], r.get("exchange"))
@@ -181,13 +187,19 @@ def manage_exits(store: Store) -> int:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--stage", choices=["a", "b", "all"], default="all")
+    ap.add_argument("--stage", default="all", help="all, or a comma-separated mix of a, b, l")
     args = ap.parse_args()
+    stages = {"a", "b", "l"} if args.stage == "all" else set(args.stage.split(","))
+    if not stages <= {"a", "b", "l"}:
+        ap.error(f"unknown stage in {args.stage!r}")
     store = Store()
     t0 = time.time()
-    if args.stage in ("a", "all"):
+    if "l" in stages:   # first: a fresh listing put in play here gets Stage B in the same run
+        from . import listings
+        print(f"listings: {listings.run(store)} new")
+    if "a" in stages:
         print(f"stage A: {stage_a(store)} new breakouts")
-    if args.stage in ("b", "all"):
+    if "b" in stages:
         print(f"stage B: {stage_b(store)} setups fired")
         print(f"exits:   {manage_exits(store)} notices")
     print(f"done in {time.time() - t0:.0f}s")

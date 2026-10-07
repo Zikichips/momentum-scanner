@@ -168,4 +168,54 @@ assert all(x["id"] != st["id"] for x in store.open_alerts())
 assert outcomes.scoreboard(store.select("alerts"))["overall"]["alerts_total"] == before - 1
 assert any(x["id"] == st["id"] for x in store.select("alerts"))   # still on record
 print("Stale alerts OK")
+
+# Listing watcher: title parsing.
+from scanner import listings as li
+assert li.parse_tickers("upbit", "뉴메레르(NMR) KRW, USDT 마켓 디지털 자산 추가") == ["NMR"]
+assert li.parse_tickers("upbit", "돌핀(POD) 신규 거래지원 안내 (KRW, BTC, USDT 마켓)") == ["POD"]
+assert li.parse_tickers("upbit", "BTC, USDT 마켓 신규 거래지원 안내 (BICO, BMT, NIL, GWEI) (BICO, BMT, NIL, GWEI 거래지원 개시 시점 추가 변경 안내)") == ["BICO", "BMT", "NIL", "GWEI"]
+assert li.parse_tickers("upbit", "아이콘(ICX) 거래지원 종료 안내 (10/19 15:00)") == []          # delisting
+assert li.parse_tickers("upbit", "블라스트(BLAST) 거래 유의 종목 지정 안내") == []                # warning
+assert li.parse_tickers("bithumb", "[마켓 추가] 뉴메레르(NMR) 원화 마켓 추가") == ["NMR"]
+assert li.parse_tickers("binance", "Binance Will List Hyperliquid (HYPE) with Seed Tag Applied") == ["HYPE"]
+assert li.parse_tickers("binance", "Binance Futures Will Launch USDⓈ-Margined CTUSDT Perpetual Contract (2026-10-01)") == ["CT"]
+for t in ("Binance Will Add Hyperliquid (HYPE) on Earn, Buy Crypto, Convert, VIP Loan & Margin",
+          "Binance Exchange Adds GoPro (GPROB) and Reddit (RDDTB) bStocks Trading Pairs on Binance Spot/Convert - 2026-09-16",
+          "Binance Futures Will Launch Multiple TradFi USDⓈ-Margined Perpetual Contracts (2026-10-06)",
+          "Binance Margin Will Add New Pairs - 2026-09-23"):
+    assert li.parse_tickers("binance", t) == [], t
+print("Listing parsing OK")
+
+# Listing watcher: a fresh Upbit listing on a Coinbase-tradeable coin -> one Telegram line (no "buy"),
+# a catalysts row, an in_play row (source listing); a repeat poll doesn't fire again; an old one is
+# stored only; a coin not on Coinbase is stored, not notified, not put in play.
+T0 = pd.Timestamp("2026-09-01 10:00", tz="UTC")
+class FakeCB:
+    markets = {"NEWC/USD": {"info": {}}, "OLDC/USD": {"info": {}}}
+    def fetch_ticker(self, sym): return {"last": 13.0}
+    def fetch_ohlcv(self, sym, timeframe="1m", since=None, limit=300):
+        step = 60_000 if timeframe == "1m" else 3_600_000
+        return [[since + i * step, 10, 14 if timeframe == "1h" else 10, 9.5, 10, 1] for i in range(5)]
+li._ex = lambda ex_id: FakeCB()
+li.trading_open = lambda source, ticker, title="": True
+anns = [li.Announcement("upbit", "1", "뉴코인(NEWC) KRW 마켓 디지털 자산 추가", ["NEWC"], T0, "u1"),
+        li.Announcement("upbit", "2", "올드코인(OLDC) KRW 마켓 디지털 자산 추가", ["OLDC"], T0 - pd.Timedelta(hours=8), "u2"),
+        li.Announcement("upbit", "3", "엑스(NOTCB) KRW 마켓 디지털 자산 추가", ["NOTCB"], T0, "u3")]
+li.poll = lambda pages=1: anns
+li.notify.send = sent.append
+sent.clear()
+assert li.run(store, now=T0 + pd.Timedelta(minutes=5)) == 3
+assert len(sent) == 1 and "NEWC" in sent[0] and "Upbit" in sent[0] and "\n" not in sent[0] and "buy" not in sent[0].lower(), sent
+cats = {r["symbol"]: r for r in store.select("catalysts", event_type="listing")}
+assert cats["NEWC/USD"]["notified"] and cats["NEWC/USD"]["price_pre"] == 10 and cats["NEWC/USD"]["price_detect"] == 13
+assert not cats["OLDC/USD"]["notified"] and not cats["NOTCB/USD"]["coinbase_tradeable"] and not cats["NOTCB/USD"]["notified"]
+ip = [r for r in store.select("in_play") if r.get("source") == "listing"]
+assert [r["symbol"] for r in ip] == ["NEWC/USD"] and ip[0]["exchange"] == "coinbase" and ip[0]["breakout_level"] == 10 and ip[0]["impulse_high"] == 14
+sent.clear()
+assert li.run(store, now=T0 + pd.Timedelta(minutes=10)) == 0 and not sent        # dedupe
+# +1h / +24h prices filled once those times pass
+li.run(store, now=T0 + pd.Timedelta(hours=25))
+c = [r for r in store.select("catalysts", event_type="listing") if r["symbol"] == "NEWC/USD"][0]
+assert c["price_1h"] == 10 and c["price_24h"] == 10, c
+print("Listing watcher OK ->", sent or "(no repeat)")
 print("ALL OK")

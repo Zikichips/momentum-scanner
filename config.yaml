@@ -79,6 +79,13 @@ targets:
 backtest:
   history_exchange: coinbase
 
+# Exchange-listing watcher (module 1, scanner/listings.py), polled every 5 minutes
+listings:
+  sources: [upbit, bithumb, binance, coinbase]
+  max_age_hours: 6           # older than this when first seen: stored only (no Telegram, not put in play)
+  dedupe_days: 7             # same exchange + coin within this window is one listing
+  exclude: [EURC, USD1, RLUSD, USDE, FDUSD, USDG, JPYC]   # stablecoin listings, on top of universe.crypto.exclude
+
 # Footprint screener (module 2)
 footprints:
   volume_multiple: 3.0
