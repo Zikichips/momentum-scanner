@@ -250,3 +250,9 @@ create table if not exists source_health (
   updated_at  timestamptz not null default now()
 );
 alter table source_health enable row level security;
+
+-- Listing alerts scored as their own group (alerts.source = 'listing', from in_play.source).
+alter table alerts add column if not exists source text;
+alter table scoreboard_daily add column if not exists listing_n_graded int;
+alter table scoreboard_daily add column if not exists listing_win_rate double precision;
+alter table scoreboard_daily add column if not exists listing_avg_r double precision;

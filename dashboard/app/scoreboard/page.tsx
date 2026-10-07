@@ -5,7 +5,7 @@ export const revalidate = 300;
 export default async function ScoreboardPage() {
   const [{ data: sb }, { data: al }] = await Promise.all([
     supabase.from("scoreboard_daily").select("*").order("day", { ascending: false }).limit(60),
-    supabase.from("alerts").select("outcome,r_multiple,rule_return,hold_7d_return,symbol,entry_type,taken").not("outcome", "is", null).not("outcome", "in", "(open,skipped_concurrent)").not("stale", "is", true),
+    supabase.from("alerts").select("outcome,r_multiple,rule_return,hold_7d_return,symbol,entry_type,taken,source").not("outcome", "is", null).not("outcome", "in", "(open,skipped_concurrent)").not("stale", "is", true),
   ]);
   const rows = (sb ?? []) as Scoreboard[];
   const latest = rows[0];
@@ -29,7 +29,9 @@ export default async function ScoreboardPage() {
       vsHold: rules != null && holds != null ? rules - holds : null,
     };
   };
-  const byType = (["pullback", "breakout"] as const).map(t => stats(t, graded.filter(a => (a.entry_type ?? "pullback") === t)));
+  // Listing alerts (pullbacks on coins the listing watcher put in play) are their own group.
+  const group = (a: Alert) => a.source === "listing" ? "listing" : a.entry_type ?? "pullback";
+  const byType = (["pullback", "breakout", "listing"] as const).map(t => stats(t, graded.filter(a => group(a) === t)));
   // Tool = every alert the scanner fired (including ones skipped at max positions);
   // trader = only the alerts actually taken.
   const toolVsTrader = [stats("tool (every alert)", graded), stats("trader (taken only)", graded.filter(a => a.taken !== false))];

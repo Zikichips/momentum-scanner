@@ -79,7 +79,7 @@ Things likely to need fixing here (do them, don't ask):
 Repo → Settings → Secrets → Actions: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`. Optional: `CRYPTOPANIC_TOKEN`, `NEWSAPI_KEY`, `COINMARKETCAL_KEY` (each has a free tier; skip until modules 1–2 are wanted).
 Then Actions tab → `scan` → Run workflow (stage `all`) and check the log. Then `daily`.
 
-Note `daily.yml` cron is `0 13 * * *` = 07:00 MDT. Edmonton switches to MST on 1 Nov 2026 → change to `0 14`. Or leave it and accept 06:00 in winter.
+`daily.yml` runs at 07:00 Edmonton all year: it has both `0 13` (MDT) and `0 14` (MST) crons and keeps the one matching Edmonton's current offset.
 
 ### 3.6 Dashboard on Vercel
 ```bash

@@ -1,7 +1,11 @@
 name: daily
 on:
   schedule:
-    - cron: "0 13 * * *"       # 13:00 UTC = 07:00 Edmonton (MDT). Change to 14:00 UTC in winter (MST).
+    # 07:00 Edmonton all year: 13:00 UTC in summer (MDT), 14:00 UTC in winter (MST). Both fire;
+    # the "season" step keeps the one that matches Edmonton's current offset. It goes by which
+    # cron fired, not the clock, so a run GitHub starts hours late is still kept.
+    - cron: "0 13 * * *"
+    - cron: "0 14 * * *"
   workflow_dispatch:
 
 jobs:
@@ -17,13 +21,28 @@ jobs:
       NEWSAPI_KEY: ${{ secrets.NEWSAPI_KEY }}
       COINMARKETCAL_KEY: ${{ secrets.COINMARKETCAL_KEY }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: season
+        id: season
+        run: |
+          zone=$(TZ=America/Edmonton date +%Z)
+          want="0 13 * * *"; [ "$zone" = "MST" ] && want="0 14 * * *"
+          if [ "${{ github.event_name }}" != "schedule" ] || [ "${{ github.event.schedule }}" = "$want" ]; then
+            echo "run=true" >> $GITHUB_OUTPUT
+          else
+            echo "run=false" >> $GITHUB_OUTPUT; echo "Edmonton is on $zone: the '$want' cron runs the digest, skipping this one"
+          fi
+      - if: steps.season.outputs.run == 'true'
+        uses: actions/checkout@v4
+      - if: steps.season.outputs.run == 'true'
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install -r requirements.txt
+      - if: steps.season.outputs.run == 'true'
+        run: pip install -r requirements.txt
       - name: grade alerts + scoreboard
+        if: steps.season.outputs.run == 'true'
         run: python -m scanner.outcomes
       - name: catalysts + footprints + digest
+        if: steps.season.outputs.run == 'true'
         run: python -m scanner.digest

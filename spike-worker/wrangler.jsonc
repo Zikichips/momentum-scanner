@@ -11,7 +11,7 @@
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SpikeState"] }],
   "vars": {
     // Suggested size only (same rule as the Python scanner's position_size); nothing is traded.
-    "CAPITAL_USD": "500",
+    "CAPITAL_USD": "300",
     "RISK_PCT": "5",
     "MAX_POSITION_PCT": "50",
     // Paid "growth" API (the free v1 API returns 403). Only used if CRYPTOPANIC_TOKEN is set; otherwise RSS.

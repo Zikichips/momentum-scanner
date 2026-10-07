@@ -89,6 +89,13 @@ def grade(alert: dict, df: pd.DataFrame, max_days: int = 14, close_at_end: bool 
 
 
 ENTRY_TYPES = ("pullback", "breakout")
+# Scoreboard groups: Stage A alerts by entry type, plus alerts on exchange listings (Stage B
+# pullbacks on coins the listing watcher put in play), kept apart from Stage A's pullbacks.
+GROUPS = (*ENTRY_TYPES, "listing")
+
+
+def group_of(a: dict) -> str:
+    return "listing" if a.get("source") == "listing" else (a.get("entry_type") or "pullback")
 # Setups not taken because account.max_concurrent_trades positions were already open are
 # stored with taken=False. They are graded like every other alert (the tool is judged on
 # all of them) but left out of the trader stats.
@@ -121,14 +128,14 @@ def _stats(alerts: list[dict]) -> dict:
 
 
 def scoreboard(alerts: list[dict]) -> dict:
-    """{day, overall, pullback, breakout, trader}.
-    overall / pullback / breakout judge the TOOL: every alert, including ones skipped at the
+    """{day, overall, pullback, breakout, listing, trader}.
+    overall / pullback / breakout / listing judge the TOOL: every alert, including ones skipped at the
     concurrency limit. trader covers only the alerts actually taken. Alerts from before entry
     types existed count as pullback. Stale alerts are left out entirely."""
     alerts = [a for a in alerts if not a.get("stale")]
     out = {"day": datetime.now(timezone.utc).date().isoformat(), "overall": _stats(alerts)}
-    for t in ENTRY_TYPES:
-        out[t] = _stats([a for a in alerts if (a.get("entry_type") or "pullback") == t])
+    for t in GROUPS:
+        out[t] = _stats([a for a in alerts if group_of(a) == t])
     out["trader"] = _stats([a for a in alerts if is_taken(a)])
     return out
 
@@ -138,7 +145,7 @@ def scoreboard_row(sb: dict) -> dict:
     o = sb["overall"]
     row = {"day": sb["day"], **{k: o[k] for k in ("alerts_total", "alerts_graded", "wins", "losses",
                                                    "win_rate", "avg_r", "expectancy_r", "vs_hold_7d")}}
-    for t in ENTRY_TYPES:
+    for t in GROUPS:
         row[f"{t}_n_graded"] = sb[t]["alerts_graded"]
         row[f"{t}_win_rate"] = sb[t]["win_rate"]
         row[f"{t}_avg_r"] = sb[t]["avg_r"]

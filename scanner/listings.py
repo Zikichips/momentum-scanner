@@ -111,6 +111,18 @@ def _upbit_page(page: int) -> dict:
     return r.json()
 
 
+def _upbit_ticker(market: str) -> requests.Response:
+    """Upbit ticker for one market, through the relay's /upbit-ticker when configured."""
+    relay, token = env("UPBIT_RELAY_URL"), env("UPBIT_RELAY_TOKEN")
+    if relay and token:
+        try:
+            return requests.get(relay.rsplit("/", 1)[0] + "/upbit-ticker", params={"market": market},
+                                headers={"x-relay-token": token}, timeout=10)
+        except Exception as e:
+            print(f"[listings] upbit ticker relay: {e}; trying direct")
+    return requests.get("https://api.upbit.com/v1/ticker", params={"markets": market}, timeout=10)
+
+
 def fetch_upbit(pages: int = 1) -> list[Announcement]:
     out = []
     for page in range(1, pages + 1):
@@ -179,10 +191,11 @@ def trading_open(source: str, ticker: str, title: str = "") -> bool | None:
             r = requests.get("https://fapi.binance.com/fapi/v1/exchangeInfo", timeout=10)
             return any(x["symbol"] == f"{ticker}USDT" and x["status"] == "TRADING" for x in r.json()["symbols"])
         if source == "upbit":
-            r = requests.get("https://api.upbit.com/v1/ticker", params={"markets": f"KRW-{ticker}"}, timeout=10)
-            if r.status_code != 200:   # no KRW market (yet): try the USDT/BTC books
-                r = requests.get("https://api.upbit.com/v1/ticker", params={"markets": f"USDT-{ticker}"}, timeout=10)
-            return r.status_code == 200 and (r.json()[0].get("acc_trade_volume_24h") or 0) > 0
+            for market in (f"KRW-{ticker}", f"USDT-{ticker}", f"BTC-{ticker}"):   # no KRW book (yet): try the others
+                r = _upbit_ticker(market)
+                if r.status_code == 200:
+                    return (r.json()[0].get("acc_trade_volume_24h") or 0) > 0
+            return False if r.status_code == 404 else None
         if source == "bithumb":
             r = requests.get(f"https://api.bithumb.com/public/ticker/{ticker}_KRW", timeout=10).json()
             return r.get("status") == "0000" and float(r["data"].get("units_traded_24H") or 0) > 0

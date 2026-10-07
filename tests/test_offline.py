@@ -158,6 +158,20 @@ assert scan.stage_b(store) == 1
 assert [x["entry_type"] for x in store.select("alerts") if x["symbol"] == "LATE/USD"] == ["pullback"]
 print("Late breakout -> Stage B pullback OK")
 
+# Listing alerts: Stage B on a listing in_play row tags the alert source="listing", and the
+# scoreboard scores it as its own group, not with Stage A pullbacks.
+lst = Setup(symbol="LST/USD", asset_class="crypto", entry=10.0, stop=9.0, target1=12.0, target2=14.0, reward_risk=4.0,
+            position_usd=100.0, retrace_pct=30.0, ema_value=9.5, pullback_low=9.1)
+scan._insert_alert(store, lst, None, "coinbase", "listing")
+la = [x for x in store.select("alerts") if x["symbol"] == "LST/USD"][0]
+assert la["source"] == "listing" and la["exchange"] == "coinbase" and la["entry_type"] == "pullback"
+store.update("alerts", la["id"], {"outcome": "t2", "r_multiple": 4.0, "rule_return": 40.0, "hold_7d_return": 20.0})
+sbl = outcomes.scoreboard(store.select("alerts"))
+assert sbl["listing"]["alerts_graded"] == 1 and sbl["listing"]["avg_r"] == 4.0
+assert all(outcomes.group_of(x) != "pullback" for x in store.select("alerts") if x["symbol"] == "LST/USD")
+assert outcomes.scoreboard_row(sbl)["listing_n_graded"] == 1
+print("Listing alerts scored apart OK")
+
 # Stale alerts: kept, but not a position and not scored.
 CFG["account"]["max_concurrent_trades"] = 2
 before = outcomes.scoreboard(store.select("alerts"))["overall"]["alerts_total"]

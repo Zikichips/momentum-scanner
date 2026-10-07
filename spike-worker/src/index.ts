@@ -74,6 +74,15 @@ export default {
       });
       return new Response(r.body, { status: r.status, headers: { "content-type": r.headers.get("content-type") ?? "application/json" } });
     }
+    // Same relay for Upbit's ticker (has trading opened on a newly listed coin?):
+    // /upbit-ticker?market=KRW-NMR, same token. Only KRW/BTC/USDT-<ticker> markets are passed on.
+    if (url.pathname === "/upbit-ticker") {
+      if (!env.RELAY_TOKEN || req.headers.get("x-relay-token") !== env.RELAY_TOKEN) return new Response("forbidden", { status: 403 });
+      const market = url.searchParams.get("market") ?? "";
+      if (!/^(KRW|BTC|USDT)-[A-Z0-9]{1,15}$/.test(market)) return new Response("bad market", { status: 400 });
+      const r = await fetch(`https://api.upbit.com/v1/ticker?markets=${market}`, { headers: { Accept: "application/json" } });
+      return new Response(r.body, { status: r.status, headers: { "content-type": r.headers.get("content-type") ?? "application/json" } });
+    }
     return new Response("spike-detector: see /status", { status: 404 });
   },
 };

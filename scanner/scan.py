@@ -61,7 +61,7 @@ def _with_exchange(row: dict, exchange: str | None) -> dict:
     return {**row, "exchange": exchange} if exchange else row
 
 
-def _insert_alert(store: Store, setup, in_play_id, exchange: str | None = None) -> bool:
+def _insert_alert(store: Store, setup, in_play_id, exchange: str | None = None, source: str | None = None) -> bool:
     """Store a new alert. At account.max_concurrent_trades open (taken) alerts it is stored
     with taken=False: graded like any alert, but not traded. Returns True if taken."""
     limit = CFG["account"].get("max_concurrent_trades")
@@ -69,6 +69,8 @@ def _insert_alert(store: Store, setup, in_play_id, exchange: str | None = None) 
     row = setup.to_row(); row.pop("pullback_low")
     row.update({"in_play_id": in_play_id, "outcome": "open", "taken": taken,
                 "fired_at": datetime.now(timezone.utc)})
+    if source:   # e.g. "listing": scored as its own group, not with Stage A pullbacks
+        row["source"] = source
     store.insert("alerts", _with_exchange(row, exchange))
     return taken
 
@@ -146,7 +148,7 @@ def stage_b(store: Store) -> int:
                 store.update("in_play", r["id"], {"impulse_high": bo.impulse_high})
             setup = detect_pullback(intraday, bo)
             if setup:
-                taken = _insert_alert(store, setup, r["id"], r.get("exchange"))
+                taken = _insert_alert(store, setup, r["id"], r.get("exchange"), r.get("source"))
                 store.update("in_play", r["id"], {"status": "triggered"})
                 notify.send(notify.format_setup(setup) if taken else notify.format_skipped(setup))
                 fired += 1
