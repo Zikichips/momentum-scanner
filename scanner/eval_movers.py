@@ -19,6 +19,12 @@ Recall:    for each (coin, mover day D), was there an alert on D-5..D-1?
 Precision: for each alert on day A, was the coin a mover on A+1..A+5?
 Matrix:    every (coin, day D) in the window: mover on D x alert on D-5..D-1.
 
+--universe kraken30 / widened compare the live universes day by day on one movers list (every
+Coinbase USD pair): kraken30 = that day's Kraken top-N by quote volume (no hindsight); widened =
+kraken30 plus that day's Coinbase movers (universe.crypto.coinbase_movers: 3-day gain in range,
+volume floor). Both can be given in one run (shared downloads) and add an account replay at the
+configured capital / max concurrent / fees, as backtest.apply_portfolio does.
+
 --universe kraken restricts everything (movers list included) to data.crypto_universe(),
 i.e. the pairs the live scanner scans, keeping those Coinbase also lists (history source).
 That list is today's top-N by volume, so it favours coins that moved recently.
@@ -60,13 +66,17 @@ def _conditions(daily: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def _alerts(sym: str, daily: pd.DataFrame) -> tuple[list, set]:
-    """(alerts the live scanner would send, days on which Stage A's conditions held at all)."""
+def _alerts(sym: str, daily: pd.DataFrame, active=None) -> tuple[list, set]:
+    """(alerts the live scanner would send, days on which Stage A's conditions held at all).
+    active(day) -> bool: whether the coin was in the scanned universe that day (None = always)."""
     expiry = timedelta(days=CFG["breakout"]["in_play_expiry_days"])
     alerts, raw, in_play = [], set(), None
     for i in range(len(daily)):
         day = daily.index[i]
-        bo = detect_breakout(daily.iloc[: i + 1], sym, "crypto")
+        if active is not None and not active(day):
+            bo = None
+        else:
+            bo = detect_breakout(daily.iloc[: i + 1], sym, "crypto")
         if bo:
             raw.add(day)
         if in_play is not None:
@@ -93,6 +103,7 @@ def _grade_alert(bo, close: float, day: pd.Timestamp, hourly: pd.DataFrame) -> d
     still_open = fired + timedelta(days=14) > hourly.index[-1] and patch["outcome"] in ("expired", "t1")
     return {"entry": setup.entry, "trade": patch["outcome"] + (" (open, marked at last bar)" if still_open else ""),
             "rule_return": patch["rule_return"], "r_multiple": patch["r_multiple"],
+            "stop": setup.stop, "outcome": patch["outcome"], "fired_at": fired, "outcome_at": patch["outcome_at"],
             "position_usd": setup.position_usd, "pnl_usd": round(setup.position_usd * patch["rule_return"] / 100, 2)}
 
 
@@ -121,10 +132,31 @@ def _pct(a, b):
 
 
 # ------------------------------------------------------------------ main
+def _kraken_top(days: pd.DatetimeIndex, top: int, cb_markets) -> dict:
+    """{day: set of symbols}: the Kraken top-N USD pairs by that day's quote volume (close x
+    volume of the daily bar), among pairs Coinbase also lists (the history source here). The
+    live scanner ranks by rolling 24h volume; at its first run after 00:00 UTC that is ~day D."""
+    import time
+    kr = data._exchange()
+    excl = set(CFG["universe"]["crypto"]["exclude"])
+    syms = [s for s, m in kr.markets.items() if m.get("spot") and m.get("quote") == "USD" and m.get("base") not in excl]
+    print(f"ranking {len(syms)} Kraken USD pairs by daily volume...")
+    vols = {}
+    for s in syms:
+        try:
+            d = data.crypto_ohlcv(s, "1d", limit=720, ex=kr)
+            vols[s] = d["close"] * d["volume"]
+        except Exception as e:
+            print(f"  {s}: {e}")
+        time.sleep(0.05)
+    vol = pd.DataFrame(vols).fillna(0.0)
+    return {D: {s for s in vol.loc[D].nlargest(top).index if s in cb_markets} if D in vol.index else set() for D in days}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--days", type=int, default=90)
-    ap.add_argument("--universe", choices=["coinbase", "kraken"], default="coinbase")
+    ap.add_argument("--universe", nargs="+", choices=["coinbase", "kraken", "kraken30", "widened"], default=["coinbase"])
     ap.add_argument("--capital", type=float, help="override account.capital_usd for this run (sizing / $ P&L only)")
     args = ap.parse_args()
     if args.capital:
@@ -134,13 +166,10 @@ def main():
     ex = ccxt.coinbase({"enableRateLimit": True})
     ex.load_markets()
     syms = _universe(ex)
-    universe_note = f"{len(syms)} Coinbase USD pairs"
-    if args.universe == "kraken":
+    if args.universe == ["kraken"]:
         kraken = data.crypto_universe()
         syms = [s for s in kraken if s in ex.markets]
-        universe_note = (f"live scanner universe: Kraken top {len(kraken)} by volume today, "
-                         f"{len(syms)} of them listed on Coinbase")
-    b, e = CFG["breakout"], CFG["breakout_entry"]
+    b = CFG["breakout"]
     warm = max(b["lookback_high_days"], b["volume_avg_days"]) + b["impulse_window_days"] + 3
 
     print(f"fetching daily bars for {len(syms)} Coinbase USD pairs...")
@@ -156,7 +185,45 @@ def main():
     start = last_day - timedelta(days=args.days - 1)
     print(f"window {start:%Y-%m-%d} .. {last_day:%Y-%m-%d}, {len(daily)} pairs with data")
 
-    # --- movers
+    ktop = None
+    if {"kraken30", "widened"} & set(args.universe):
+        all_days = pd.DatetimeIndex(sorted({D for d in daily.values() for D in d.index}))
+        ktop = _kraken_top(all_days, CFG["universe"]["crypto"]["top_n_by_volume"], ex.markets)
+    hourly_cache: dict = {}
+    for mode in args.universe:
+        _report(mode, args, ex, daily, cond, start, last_day, ktop, hourly_cache)
+
+
+def _membership(mode: str, daily: dict, ktop: dict | None):
+    """(active(sym) -> active(day) | None, via(sym, day) -> 'kraken' | 'coinbase mover' | None, note)."""
+    top_n = CFG["universe"]["crypto"]["top_n_by_volume"]
+    if mode == "kraken30":
+        return (lambda s: (lambda D: s in ktop.get(D, ()))), (lambda s, D: "kraken"), \
+            f"Kraken top {top_n} by each day's volume (rolling, no hindsight), on Coinbase data"
+    if mode == "widened":
+        m = CFG["universe"]["crypto"]["coinbase_movers"]
+        w = m["gain_window_days"]
+        gain = {s: (d["close"] / d["close"].shift(w) - 1) * 100 for s, d in daily.items()}
+        qvol = {s: d["close"] * d["volume"] for s, d in daily.items()}
+        def mover(s, D):
+            g, v = gain[s].get(D), qvol[s].get(D)
+            return g is not None and v is not None and m["min_gain_pct"] <= g <= m["max_gain_pct"] and v >= m["min_volume_usd"]
+        via = lambda s, D: "kraken" if s in ktop.get(D, ()) else "coinbase mover" if mover(s, D) else None
+        return (lambda s: (lambda D: via(s, D) is not None)), via, \
+            (f"Kraken top {top_n} by each day's volume plus that day's Coinbase movers ({m['min_gain_pct']}–"
+             f"{m['max_gain_pct']}% over {w}d, ≥ ${m['min_volume_usd'] / 1e6:.0f}M volume)")
+    return (lambda s: None), (lambda s, D: None), None
+
+
+def _report(mode, args, ex, daily, cond, start, last_day, ktop, hourly_cache):
+    b, e = CFG["breakout"], CFG["breakout_entry"]
+    active_for, via, note = _membership(mode, daily, ktop)
+    universe_note = note or f"{len(daily)} Coinbase USD pairs"
+    if mode == "kraken":
+        universe_note = f"live scanner universe: Kraken top-N by volume today, {len(daily)} of them listed on Coinbase"
+    print(f"\n=== {mode}: {universe_note}")
+
+    # --- movers (always over every pair loaded: the same list for every universe)
     rows = []
     for s, c in cond.items():
         w = c[(c.index >= start) & (c["day_gain"] >= MIN_GAIN)]
@@ -168,17 +235,19 @@ def main():
     # --- alerts
     alerts, raw = {}, {}
     for s, d in daily.items():
-        alerts[s], raw[s] = _alerts(s, d)
+        alerts[s], raw[s] = _alerts(s, d, active_for(s))
     need_grade = {s: [a for a in al if a[0] >= start - LOOKBACK * DAY] for s, al in alerts.items()}
     need_grade = {s: al for s, al in need_grade.items() if al}
     print(f"grading {sum(map(len, need_grade.values()))} alerts on hourly bars ({len(need_grade)} pairs)...")
     graded = {}
     for s, al in need_grade.items():
-        try:
-            days_back = (pd.Timestamp.now(tz="UTC") - min(a[0] for a in al)).days + 2
-            hourly = data.crypto_history(s, "1h", days_back, ex)
-        except Exception as ex_:
-            print(f"  {s}: {ex_}"); hourly = pd.DataFrame()
+        days_back = (pd.Timestamp.now(tz="UTC") - min(a[0] for a in al)).days + 2
+        if s not in hourly_cache or hourly_cache[s][0] < days_back:
+            try:
+                hourly_cache[s] = (days_back, data.crypto_history(s, "1h", days_back, ex))
+            except Exception as ex_:
+                print(f"  {s}: {ex_}"); hourly_cache[s] = (days_back, pd.DataFrame())
+        hourly = hourly_cache[s][1]
         for day, bo, close in al:
             graded[(s, day)] = _grade_alert(bo, close, day, hourly) if not hourly.empty else \
                 {"entry": close, "trade": "no hourly data", "rule_return": None, "r_multiple": None}
@@ -197,7 +266,10 @@ def main():
             c = cond[s]
             prev = c[c.index == D - DAY]
             r["caught"] = "no"
-            if prev.empty or prev[["prior_high", "vol_mult", "gain_3d"]].isna().any(axis=None):
+            act = active_for(s)
+            if act is not None and not any(act(x) for x in pd.date_range(D - LOOKBACK * DAY, D - DAY, tz="UTC")):
+                r["why"] = "not in universe on D−5..D−1"
+            elif prev.empty or prev[["prior_high", "vol_mult", "gain_3d"]].isna().any(axis=None):
                 r["why"] = "not enough history"
             else:
                 p = prev.iloc[0]
@@ -228,8 +300,25 @@ def main():
                 "became_mover": "yes" if ahead else ("no" if complete else "pending"),
                 "days_to_mover": (min(ahead) - day).days if ahead else None,
                 "alert_day_was_mover": "yes" if (s, day) in mover_set else "no",
+                "via": via(s, day),
                 **graded[(s, day)],
             })
+
+    # --- account replay: the same alerts as one account at the configured capital, max
+    # concurrent trades and fees (same-day ties: Kraken top-N first, as the live scan order)
+    from .backtest import apply_portfolio
+    acct = CFG["account"]
+    tradable = sorted((p for p in precision if p.get("outcome") and p.get("fired_at") is not None),
+                      key=lambda p: (p["alert_day"], p.get("via") != "kraken"))
+    acct_rows, acct_stats = apply_portfolio(tradable, acct["capital_usd"], acct.get("max_concurrent_trades"),
+                                            acct["max_position_pct"], acct.get("fees_pct", 0.0))
+    by_via = {}
+    for v in sorted({p.get("via") for p in precision if p.get("via")}):
+        sub = [p for p in precision if p.get("via") == v and p["became_mover"] != "pending"]
+        tk = [r for r in acct_rows if r.get("via") == v and r.get("taken")]
+        by_via[v] = {"via": v, "alerts": len([p for p in precision if p.get("via") == v]), "judged": len(sub),
+                     "became_mover": sum(p["became_mover"] == "yes" for p in sub), "avg_r": _avg([p["r_multiple"] for p in sub]),
+                     "taken": len(tk), "account_pnl_usd": round(sum(r["pnl_usd"] for r in tk), 2)}
 
     # --- confusion matrix over every (coin, day) in the window
     tp = fn = fp = tn = 0
@@ -295,6 +384,16 @@ def main():
         f"≤ −1R: {sum(r <= -1 for r in no_r)}, −1R to 0: {sum(-1 < r <= 0 for r in no_r)}, > 0: {sum(r > 0 for r in no_r)}; "
         f"median {pd.Series(no_r).median() if no_r else float('nan'):.2f}R, worst {min(no_r) if no_r else float('nan'):.2f}R.",
         "",
+        f"## Account replay — ${acct['capital_usd']:,.0f}, max {acct.get('max_concurrent_trades') or 'no limit'} open, "
+        f"{acct['max_position_pct']}% cap, {acct.get('fees_pct', 0)}%/side fees",
+        "",
+        f"Every graded breakout entry in the window replayed as one account (trades still open are marked at the last bar). "
+        f"Taken {acct_stats['taken']}, skipped at the limit {acct_stats['skipped']}; win rate {acct_stats['win_rate']}, "
+        f"avg R {acct_stats['avg_r']}; **P&L ${acct_stats['pnl_usd']:,.2f}**, max drawdown ${acct_stats['max_dd_usd']:,.2f}, "
+        f"worst trade ${acct_stats['worst_loss_usd']:,.2f}.",
+        "",
+        *([_md_table(list(by_via.values()), ["via", "alerts", "judged", "became_mover", "avg_r", "taken", "account_pnl_usd"]), ""]
+          if len(by_via) > 1 else []),
         "## Confusion matrix — every (coin, day) in the window",
         "",
         "| | Alert in prior 5 days | No alert |",
@@ -316,16 +415,16 @@ def main():
         "## Alerts",
         "",
         _md_table(sorted(precision, key=lambda p: p["alert_day"]),
-                  ["alert_day", "symbol", "impulse_pct", "alert_day_was_mover", "became_mover", "days_to_mover",
-                   "entry", "trade", "rule_return", "r_multiple", "position_usd", "pnl_usd"]),
+                  ["alert_day", "symbol", *(["via"] if by_via else []), "impulse_pct", "alert_day_was_mover", "became_mover",
+                   "days_to_mover", "entry", "trade", "rule_return", "r_multiple", "position_usd", "pnl_usd"]),
         "",
     ]
     report = "\n".join(lines)
-    suffix = ("" if args.universe == "coinbase" else f"_{args.universe}") + ("" if args.days == 90 else f"_{args.days}d") \
+    suffix = ("" if mode == "coinbase" else f"_{mode}") + ("" if args.days == 90 else f"_{args.days}d") \
         + (f"_{args.capital:g}usd" if args.capital else "")
     out = ROOT / "data" / f"movers_eval{suffix}.md"
     out.write_text(report)
-    print(report.split("## Caught movers")[0])
+    print(report.split("## Confusion matrix")[0])
     print("written", out)
 
 
