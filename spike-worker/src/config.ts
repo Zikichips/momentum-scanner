@@ -66,4 +66,5 @@ export interface Env {
   CRYPTOPANIC_TOKEN?: string;
   REDDIT_CLIENT_ID?: string;
   REDDIT_CLIENT_SECRET?: string;
+  RELAY_TOKEN?: string;          // gates /upbit-notices (same value as the UPBIT_RELAY_TOKEN Actions secret)
 }

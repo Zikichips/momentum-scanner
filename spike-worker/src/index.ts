@@ -63,6 +63,17 @@ export default {
         recent: f.items.filter(i => now - i.published <= 6 * 3600_000).length,
       });
     }
+    // Upbit notice relay for the Python listing watcher: Upbit returns 403 to GitHub Actions
+    // runners. Fixed upstream (Upbit's "trade" announcements only) and token-gated, so it is
+    // not an open proxy: /upbit-notices?page=1 with header x-relay-token: RELAY_TOKEN.
+    if (url.pathname === "/upbit-notices") {
+      if (!env.RELAY_TOKEN || req.headers.get("x-relay-token") !== env.RELAY_TOKEN) return new Response("forbidden", { status: 403 });
+      const page = Math.min(Math.max(parseInt(url.searchParams.get("page") ?? "1", 10) || 1, 1), 5);
+      const r = await fetch(`https://api-manager.upbit.com/api/v1/announcements?os=web&page=${page}&per_page=20&category=trade`, {
+        headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/128 Safari/537.36", Accept: "application/json" },
+      });
+      return new Response(r.body, { status: r.status, headers: { "content-type": r.headers.get("content-type") ?? "application/json" } });
+    }
     return new Response("spike-detector: see /status", { status: 404 });
   },
 };

@@ -28,7 +28,7 @@ from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 import pandas as pd
 import requests
-from .config import CFG
+from .config import CFG, env
 from . import data
 from .db import Store
 from . import alerts as notify
@@ -94,13 +94,27 @@ def parse_tickers(source: str, title: str) -> list[str]:
 
 
 # ------------------------------------------------------------------ sources
+def _upbit_page(page: int) -> dict:
+    """Upbit returns 403 to GitHub Actions runners, so when UPBIT_RELAY_URL is set the page is
+    fetched through the spike worker's /upbit-notices relay (Cloudflare), else directly."""
+    relay, token = env("UPBIT_RELAY_URL"), env("UPBIT_RELAY_TOKEN")
+    if relay and token:
+        try:
+            r = requests.get(relay, params={"page": page}, headers={"x-relay-token": token}, timeout=15)
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            print(f"[listings] upbit relay: {e}; trying direct")
+    r = requests.get("https://api-manager.upbit.com/api/v1/announcements",
+                     params={"os": "web", "page": page, "per_page": 20, "category": "trade"}, headers=UA, timeout=15)
+    r.raise_for_status()
+    return r.json()
+
+
 def fetch_upbit(pages: int = 1) -> list[Announcement]:
     out = []
     for page in range(1, pages + 1):
-        r = requests.get("https://api-manager.upbit.com/api/v1/announcements",
-                         params={"os": "web", "page": page, "per_page": 20, "category": "trade"}, headers=UA, timeout=15)
-        r.raise_for_status()
-        for n in r.json()["data"]["notices"]:
+        for n in _upbit_page(page)["data"]["notices"]:
             out.append(Announcement("upbit", str(n["id"]), n["title"], parse_tickers("upbit", n["title"]),
                                     pd.Timestamp(n.get("first_listed_at") or n["listed_at"]).tz_convert("UTC"),
                                     f"https://upbit.com/service_center/notice?id={n['id']}"))
