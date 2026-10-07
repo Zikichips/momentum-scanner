@@ -201,7 +201,8 @@ li.trading_open = lambda source, ticker, title="": True
 anns = [li.Announcement("upbit", "1", "뉴코인(NEWC) KRW 마켓 디지털 자산 추가", ["NEWC"], T0, "u1"),
         li.Announcement("upbit", "2", "올드코인(OLDC) KRW 마켓 디지털 자산 추가", ["OLDC"], T0 - pd.Timedelta(hours=8), "u2"),
         li.Announcement("upbit", "3", "엑스(NOTCB) KRW 마켓 디지털 자산 추가", ["NOTCB"], T0, "u3")]
-li.poll = lambda pages=1: anns
+li._poll = li.poll
+li.poll = lambda pages=1, store=None, now=None: anns
 li.notify.send = sent.append
 sent.clear()
 assert li.run(store, now=T0 + pd.Timedelta(minutes=5)) == 3
@@ -218,4 +219,22 @@ li.run(store, now=T0 + pd.Timedelta(hours=25))
 c = [r for r in store.select("catalysts", event_type="listing") if r["symbol"] == "NEWC/USD"][0]
 assert c["price_1h"] == 10 and c["price_24h"] == 10, c
 print("Listing watcher OK ->", sent or "(no repeat)")
+
+# Source health: "down" once after 3 failed runs in a row, nothing on the 4th, "recovered" once.
+def broken(pages=1): raise ConnectionError("403 Forbidden")
+ok_fetchers = dict(li.FETCHERS)
+li.FETCHERS = {k: (broken if k == "upbit" else (lambda pages=1: [anns[0]])) for k in ok_fetchers}
+health = []
+for i in range(5):
+    sent.clear(); li._poll(store=store, now=T0); health.append(list(sent))
+assert health[:2] == [[], []] and len(health[2]) == 1 and "DOWN" in health[2][0] and "Upbit" in health[2][0], health
+assert health[3] == [] and health[4] == [], health
+li.FETCHERS["upbit"] = lambda pages=1: [anns[0]]
+sent.clear(); li._poll(store=store, now=T0)
+assert len(sent) == 1 and "RECOVERED" in sent[0] and "Upbit" in sent[0], sent
+sent.clear(); li._poll(store=store, now=T0); assert not sent
+li.FETCHERS["binance"] = lambda pages=1: []          # empty = failure too
+for i in range(3): sent.clear(); li._poll(store=store, now=T0)
+assert len(sent) == 1 and "Binance" in sent[0], sent
+print("Source health OK ->", health[2][0])
 print("ALL OK")

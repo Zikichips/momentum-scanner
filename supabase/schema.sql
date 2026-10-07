@@ -239,3 +239,14 @@ alter table spike_scoreboard add column if not exists median_net_60_real double 
 alter table spike_alerts add column if not exists kind text not null default 'spike';  -- 'early': price_30m_ago / high_30m / move_30m hold the 15-minute window's values
 alter table spike_alerts drop constraint if exists spike_alerts_kind_check;
 alter table spike_alerts add constraint spike_alerts_kind_check check (kind in ('spike','early'));
+
+-- Listing-watcher source health (scanner/listings.py): consecutive failed runs per source,
+-- so "source down" / "recovered" are each sent once. Written with the service role only.
+create table if not exists source_health (
+  source      text primary key,              -- upbit | bithumb | binance | coinbase
+  failures    integer not null default 0,    -- consecutive failed runs
+  down        boolean not null default false,
+  last_error  text,
+  updated_at  timestamptz not null default now()
+);
+alter table source_health enable row level security;

@@ -24,7 +24,7 @@ class Store:
         else:
             _LOCAL.parent.mkdir(exist_ok=True)
             self._local = json.loads(_LOCAL.read_text()) if _LOCAL.exists() else {}
-            for t in ("in_play", "alerts", "journal", "catalysts", "footprints", "scoreboard_daily"):
+            for t in ("in_play", "alerts", "journal", "catalysts", "footprints", "scoreboard_daily", "source_health"):
                 self._local.setdefault(t, [])
 
     # ----------------------------------------------------------- generic

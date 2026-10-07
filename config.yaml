@@ -84,6 +84,7 @@ listings:
   sources: [upbit, bithumb, binance, coinbase]
   max_age_hours: 6           # older than this when first seen: stored only (no Telegram, not put in play)
   dedupe_days: 7             # same exchange + coin within this window is one listing
+  down_after_failures: 3     # Telegram "source down" after this many failed runs in a row (once), "recovered" once after
   exclude: [EURC, USD1, RLUSD, USDE, FDUSD, USDG, JPYC]   # stablecoin listings, on top of universe.crypto.exclude
 
 # Footprint screener (module 2)

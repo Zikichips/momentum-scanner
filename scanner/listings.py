@@ -317,16 +317,46 @@ def fill_followups(store: Store, now: pd.Timestamp) -> int:
     return n
 
 
-def poll(pages: int = 1) -> list[Announcement]:
+def poll(pages: int = 1, store: Store | None = None, now: pd.Timestamp | None = None) -> list[Announcement]:
+    """All sources' notices. With a store, each source's health is updated (see _health)."""
     out = []
     for src in L["sources"]:
+        err = None
         try:
             got = FETCHERS[src](pages)
             print(f"[listings] {src}: {len(got)} notices, {sum(bool(a.tickers) for a in got)} listings")
+            if not got:   # every source always has recent notices: empty means blocked or changed
+                err = "no notices returned"
             out += got
         except Exception as e:   # blocked / changed site: the other sources still run
-            print(f"[listings] {src}: {e}")
+            err = f"{type(e).__name__}: {e}"
+            print(f"[listings] {src}: {err}")
+        if store is not None:
+            try:
+                _health(store, src, err, now or pd.Timestamp.now(tz="UTC"))
+            except Exception as e:
+                print(f"[listings] {src} health: {e}")
     return out
+
+
+def _health(store: Store, src: str, err: str | None, now: pd.Timestamp) -> None:
+    """Count consecutive failed runs per source. One Telegram line when a source reaches
+    listings.down_after_failures failures in a row, one when it next succeeds; none in between."""
+    h = (store.select("source_health", source=src) or [{}])[0]
+    n, down = h.get("failures") or 0, bool(h.get("down"))
+    if err is None:
+        if down:
+            notify.send(f"*LISTING SOURCE RECOVERED — {NAMES[src]}*: working again after {n} failed runs.")
+        if n or down:
+            store.upsert("source_health", {"source": src, "failures": 0, "down": False, "last_error": None,
+                                           "updated_at": now.isoformat()}, on_conflict="source")
+        return
+    n += 1
+    row = {"source": src, "failures": n, "down": down, "last_error": err[:300], "updated_at": now.isoformat()}
+    if n >= L["down_after_failures"] and not down:
+        notify.send(f"*LISTING SOURCE DOWN — {NAMES[src]}*: {n} runs in a row failed ({err[:120]}).")
+        row["down"] = True
+    store.upsert("source_health", row, on_conflict="source")
 
 
 def run(store: Store, now: pd.Timestamp | None = None) -> int:
@@ -334,7 +364,7 @@ def run(store: Store, now: pd.Timestamp | None = None) -> int:
     seen = _recent(store, L["dedupe_days"], now)
     excl = set(CFG["universe"]["crypto"]["exclude"]) | set(L["exclude"])
     new = 0
-    for a in sorted(poll(), key=lambda a: a.announced_at):
+    for a in sorted(poll(store=store, now=now), key=lambda a: a.announced_at):
         if now - a.announced_at > pd.Timedelta(days=L["dedupe_days"]):
             continue
         for t in a.tickers:
