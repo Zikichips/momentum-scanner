@@ -89,13 +89,14 @@ def grade(alert: dict, df: pd.DataFrame, max_days: int = 14, close_at_end: bool 
 
 
 ENTRY_TYPES = ("pullback", "breakout")
-# Scoreboard groups: Stage A alerts by entry type, plus alerts on exchange listings (Stage B
-# pullbacks on coins the listing watcher put in play), kept apart from Stage A's pullbacks.
-GROUPS = (*ENTRY_TYPES, "listing")
+# Scoreboard groups: Stage A alerts by entry type, plus Stage B pullbacks on coins put in play
+# by the listing watcher or by intraday Stage A, each kept apart from daily Stage A's pullbacks.
+SOURCES = ("listing", "intraday")
+GROUPS = (*ENTRY_TYPES, *SOURCES)
 
 
 def group_of(a: dict) -> str:
-    return "listing" if a.get("source") == "listing" else (a.get("entry_type") or "pullback")
+    return a["source"] if a.get("source") in SOURCES else (a.get("entry_type") or "pullback")
 # Setups not taken because account.max_concurrent_trades positions were already open are
 # stored with taken=False. They are graded like every other alert (the tool is judged on
 # all of them) but left out of the trader stats.
@@ -128,8 +129,8 @@ def _stats(alerts: list[dict]) -> dict:
 
 
 def scoreboard(alerts: list[dict]) -> dict:
-    """{day, overall, pullback, breakout, listing, trader}.
-    overall / pullback / breakout / listing judge the TOOL: every alert, including ones skipped at the
+    """{day, overall, pullback, breakout, listing, intraday, trader}.
+    overall / pullback / breakout / listing / intraday judge the TOOL: every alert, including ones skipped at the
     concurrency limit. trader covers only the alerts actually taken. Alerts from before entry
     types existed count as pullback. Stale alerts are left out entirely."""
     alerts = [a for a in alerts if not a.get("stale")]

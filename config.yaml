@@ -51,6 +51,17 @@ breakout:
   impulse_window_days: 3
   in_play_expiry_days: 5     # drop if no setup within N days of breakout
 
+# Stage A, intraday: checked on the hourly run, on 1h bars. No buy alert: a hit goes in play
+# (source "intraday") and Stage B watches it for a pullback under the normal rules. A daily
+# breakout on the same coin takes the row over (daily levels, breakout entry as usual).
+intraday_breakout:
+  enabled: true
+  lookback_high_hours: 72    # 1h close above the prior 3-day high
+  volume_multiple: 3.0       # 1h volume >= this x the prior 3-day hourly average
+  volume_avg_hours: 72
+  min_gain_pct: 15           # close vs the close gain_window_hours earlier
+  gain_window_hours: 24
+
 # Breakout entry (fires on the Stage A bar)
 breakout_entry:
   stop_buffer_pct: 3.0       # stop = breakout_level x (1 - this/100)

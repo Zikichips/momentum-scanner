@@ -1,6 +1,7 @@
 """Pure strategy logic. No I/O. Used by the live scanner and the backtester alike.
 
 Stage A  detect_breakout(daily_df)       -> Breakout | None
+         detect_intraday_breakout(1h_df) -> Breakout | None   (no entry; goes in play only)
          breakout_entry(bo, close)       -> Setup | None   (entry type "breakout")
 Stage B  detect_pullback(intraday_df, bo) -> Setup | None   (entry type "pullback")
 Stage C  targets, stop, sizing live inside each entry function
@@ -83,6 +84,40 @@ def detect_breakout(daily: pd.DataFrame, symbol: str, asset_class: str) -> Break
         impulse_high=float(window["high"].max()),
         impulse_volume=float(window["volume"].mean()),
         impulse_pct=float(last["impulse"]),
+    )
+
+
+def detect_intraday_breakout(hourly: pd.DataFrame, symbol: str, asset_class: str) -> Breakout | None:
+    """Return a Breakout if the LAST completed 1h bar closed above the prior 3-day high on
+    volume >= 3x the prior 3-day hourly average, up >= 15% over 24h (intraday_breakout config).
+    breakout_date is the hour bar's timestamp; the impulse is the gain window."""
+    b = CFG["intraday_breakout"]
+    w = b["gain_window_hours"]
+    need = max(b["lookback_high_hours"], b["volume_avg_hours"], w) + 2
+    if len(hourly) < need:
+        return None
+
+    df = hourly.copy()
+    df["prior_high"] = rolling_high(df["high"], b["lookback_high_hours"])
+    df["vol_avg"] = volume_avg(df["volume"], b["volume_avg_hours"])
+    df["gain"] = pct_change_over(df["close"], w)
+
+    last = df.iloc[-1]
+    if not (last["close"] > last["prior_high"]
+            and last["volume"] >= b["volume_multiple"] * last["vol_avg"]
+            and last["gain"] >= b["min_gain_pct"]):
+        return None
+
+    window = df.iloc[-(w + 1):]   # the bar before the window (the base) plus the window
+    return Breakout(
+        symbol=symbol,
+        asset_class=asset_class,
+        breakout_date=df.index[-1].to_pydatetime(),
+        breakout_level=float(last["prior_high"]),
+        impulse_low=float(window["low"].min()),
+        impulse_high=float(window["high"].max()),
+        impulse_volume=float(window["volume"].iloc[1:].mean()),
+        impulse_pct=float(last["gain"]),
     )
 
 

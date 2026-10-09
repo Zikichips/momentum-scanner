@@ -1,7 +1,7 @@
 """Live scan entry point. Run every 15 minutes by GitHub Actions.
 
   python -m scanner.scan            # full scan (Stage A daily + Stage B intraday + exits)
-  python -m scanner.scan --stage a  # breakouts only (cheaper; fine hourly)
+  python -m scanner.scan --stage a  # breakouts only: daily, plus intraday on the last 1h bar (run hourly)
   python -m scanner.scan --stage b  # pullbacks + exits only
   python -m scanner.scan --stage l  # exchange-listing watcher only (scanner/listings.py)
   python -m scanner.scan --stage a,l  # any comma-separated mix
@@ -13,7 +13,8 @@ from datetime import datetime, timezone, timedelta
 import pandas as pd
 from .config import CFG
 from . import data
-from .strategy import detect_breakout, detect_pullback, breakout_entry, entries_enabled, update_impulse_high, late_breakout, Breakout
+from .strategy import (detect_breakout, detect_intraday_breakout, detect_pullback, breakout_entry, entries_enabled,
+                       update_impulse_high, late_breakout, Breakout)
 from .db import Store
 from . import alerts as notify
 
@@ -62,9 +63,9 @@ def _with_exchange(row: dict, exchange: str | None) -> dict:
 
 
 def _is_shadow(exchange: str | None, source: str | None) -> bool:
-    """A Coinbase mover (Stage A coin from outside the Kraken top-N, not a listing) while
-    universe.crypto.coinbase_movers.shadow is on."""
-    return (exchange == "coinbase" and not source
+    """A Coinbase mover (Stage A coin from outside the Kraken top-N, daily or intraday breakout,
+    not a listing) while universe.crypto.coinbase_movers.shadow is on."""
+    return (exchange == "coinbase" and source != "listing"
             and bool(CFG["universe"]["crypto"].get("coinbase_movers", {}).get("shadow")))
 
 
@@ -94,18 +95,25 @@ def _insert_alert(store: Store, setup, in_play_id, exchange: str | None = None, 
 
 # ------------------------------------------------------------------ Stage A
 def stage_a(store: Store) -> int:
+    """Daily breakouts, then (hourly run) intraday breakouts on the coins without one.
+    An intraday row (source "intraday") is a precursor: it doesn't stop the daily check, and a
+    daily breakout on the same coin takes it over (_take_over_intraday)."""
     found = 0
-    already = {(r["symbol"], str(r["breakout_date"])[:10]) for r in store.select("in_play")}
-    watching = {r["symbol"] for r in store.watching()}
+    rows = store.select("in_play")
+    already = {(r["symbol"], str(r["breakout_date"])[:10]) for r in rows if r.get("source") != "intraday"}
+    any_day = {(r["symbol"], str(r["breakout_date"])[:10]) for r in rows}
+    watching = {r["symbol"]: r for r in store.watching()}
     ex = data._exchange() if CFG["universe"]["crypto"]["enabled"] else None
     for sym, cls, src in universe():
-        if sym in watching:   # same as the backtester: no new Stage A while already in play
+        w = watching.get(sym)
+        if w and w.get("source") != "intraday":   # same as the backtester: no new Stage A while already in play
             continue
         try:
             rex = data.exchange_for(src, ex)
             daily = data.ohlcv(sym, cls, CFG["timeframes"]["daily"], limit=120, ex=rex)
             bo = detect_breakout(daily, sym, cls)
             if bo and (sym, bo.breakout_date.strftime("%Y-%m-%d")) not in already:
+                day = bo.breakout_date.strftime("%Y-%m-%d")
                 close = float(daily["close"].iloc[-1])
                 try:
                     price = data.last_price(sym, cls, rex)
@@ -116,10 +124,10 @@ def stage_a(store: Store) -> int:
                 # pullback entry can still trigger later. The two are graded separately.
                 ip = store.upsert("in_play", _with_exchange({
                     "symbol": sym, "asset_class": cls,
-                    "breakout_date": bo.breakout_date.strftime("%Y-%m-%d"),
+                    "breakout_date": day,
                     "breakout_level": bo.breakout_level, "impulse_low": bo.impulse_low,
                     "impulse_high": bo.impulse_high, "impulse_volume": bo.impulse_volume,
-                    "status": "watching", "late": bool(late),
+                    "status": _take_over_intraday(store, rows, sym, day), "late": bool(late), "source": None,
                 }, src), on_conflict="symbol,breakout_date")
                 found += 1
                 if late:   # no buy at a price that's gone; Stage B still watches for a pullback
@@ -131,10 +139,46 @@ def stage_a(store: Store) -> int:
                     taken = _insert_alert(store, setup, ip.get("id"), src)
                     msg += "\n\n" + _alert_message(setup, taken, src, None)
                 notify.send(msg)
+            elif not w and CFG.get("intraday_breakout", {}).get("enabled"):
+                found += _intraday_breakout(store, sym, cls, src, rex, any_day)
         except Exception as e:  # one bad symbol must not kill the run
             print(f"[stage_a] {sym}: {e}")
         time.sleep(0.05)
     return found
+
+
+def _take_over_intraday(store: Store, rows: list[dict], sym: str, day: str) -> str:
+    """A daily breakout on a coin the intraday check put in play replaces the intraday row:
+    the same day's row is overwritten by the upsert (keeping its status, so a pullback that
+    already fired doesn't fire again on the same move); an earlier day's watching row is closed.
+    Returns the status for the daily row."""
+    status = "watching"
+    for r in rows:
+        if r["symbol"] != sym or r.get("source") != "intraday":
+            continue
+        if str(r["breakout_date"])[:10] == day:
+            status = r["status"]
+        elif r["status"] == "watching":
+            store.update("in_play", r["id"], {"status": "expired", "updated_at": datetime.now(timezone.utc)})
+    return status
+
+
+def _intraday_breakout(store: Store, sym: str, cls: str, src: str | None, rex, any_day: set) -> int:
+    """Intraday Stage A on the last closed 1h bar. No buy alert: the coin goes in play
+    (source "intraday") and Stage B watches it for a pullback. Returns 1 if added."""
+    hourly = data.ohlcv(sym, cls, CFG["timeframes"]["intraday"], limit=120, ex=rex)
+    bo = detect_intraday_breakout(hourly, sym, cls)
+    if not bo or (sym, bo.breakout_date.strftime("%Y-%m-%d")) in any_day:
+        return 0
+    store.upsert("in_play", _with_exchange({
+        "symbol": sym, "asset_class": cls,
+        "breakout_date": bo.breakout_date.strftime("%Y-%m-%d"),
+        "breakout_level": bo.breakout_level, "impulse_low": bo.impulse_low,
+        "impulse_high": bo.impulse_high, "impulse_volume": bo.impulse_volume,
+        "status": "watching", "late": False, "source": "intraday",
+    }, src), on_conflict="symbol,breakout_date")
+    notify.send(notify.format_intraday(bo, src))
+    return 1
 
 
 # ------------------------------------------------------------------ Stage B
@@ -160,7 +204,7 @@ def stage_b(store: Store) -> int:
             if "pullback" not in entries_enabled():
                 continue   # row stays "watching" until expiry, so Stage A won't re-fire meanwhile
             intraday = data.ohlcv(bo.symbol, bo.asset_class, CFG["timeframes"]["intraday"], limit=300, ex=rex)
-            if r.get("source") == "listing":   # day 0 has no closed daily bar yet: track the high on hourly bars
+            if r.get("source") in ("listing", "intraday"):   # day 0 has no closed daily bar yet: track the high on hourly bars
                 bo = update_impulse_high(bo, intraday)
                 store.update("in_play", r["id"], {"impulse_high": bo.impulse_high})
             setup = detect_pullback(intraday, bo)

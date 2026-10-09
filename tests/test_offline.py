@@ -285,4 +285,66 @@ li.FETCHERS["binance"] = lambda pages=1: []          # empty = failure too
 for i in range(3): sent.clear(); li._poll(store=store, now=T0)
 assert len(sent) == 1 and "Binance" in sent[0], sent
 print("Source health OK ->", health[2][0])
+
+# Intraday Stage A: a 1h close over the 3-day high on 3x volume, +15% in 24h, puts the coin in
+# play (source "intraday") with no buy alert; Stage B then fires a pullback scored as "intraday".
+# A daily breakout on the same coin and day takes the row over, keeping its status.
+import numpy as np
+rows_ = [(1.0 + 0.005 * np.sin(i / 3),) * 4 + (100.0,) for i in range(240)]
+rows_ = [(c, c * 1.003, c * 0.997, c, v) for c, _, _, _, v in rows_]
+rows_.append((1.0, 1.19, 1.0, 1.18, 600.0))                                   # breakout hour
+rows_ += [(c - 0.03, c * 1.003, c - 0.035, c, 400.0) for c in (1.24, 1.29, 1.33, 1.37, 1.40)]
+rows_ += [(c + 0.006, c + 0.008, c - 0.004, c, 80.0) for c in (1.40 - 0.12 * (k + 1) / 18 for k in range(18))]
+rows_.append((1.28, 1.31, 1.279, 1.305, 120.0))                               # bounce over the EMA
+synth = pd.DataFrame(rows_, columns=["open", "high", "low", "close", "volume"],
+                     index=pd.date_range("2026-09-01", periods=len(rows_), freq="1h", tz="UTC"))
+data.ohlcv = fake_ohlcv
+data.exchange_for = lambda ex_id, default=None: default
+for r in store.watching():
+    store.update("in_play", r["id"], {"status": "expired"})
+scan.universe = lambda: [("INTRA/USD", "crypto", None)]
+hist = synth.iloc[:240]                                                        # before the breakout hour
+assert scan.stage_a(store) == 0
+hist = synth.iloc[:241]
+n_alerts = len(store.select("alerts"))
+sent.clear()
+assert scan.stage_a(store) == 1
+ip = [r for r in store.select("in_play") if r["symbol"] == "INTRA/USD"]
+assert len(ip) == 1 and ip[0]["source"] == "intraday" and ip[0]["status"] == "watching" and ip[0]["breakout_date"] == "2026-09-11", ip
+assert len(store.select("alerts")) == n_alerts                                # no buy alert
+assert len(sent) == 1 and "IN PLAY (intraday)" in sent[0] and "SETUP" not in sent[0], sent
+hist = synth.iloc[:245]
+assert scan.stage_a(store) == 0                                               # in play: not re-added
+hist = synth
+CFG["account"]["max_concurrent_trades"] = None                                # earlier sections left slots full
+sent.clear()
+assert scan.stage_b(store) == 1
+ia = [x for x in store.select("alerts") if x["symbol"] == "INTRA/USD"]
+assert len(ia) == 1 and ia[0]["source"] == "intraday" and ia[0]["entry_type"] == "pullback" and ia[0]["taken"] is not False, ia
+assert "MOMENTUM SETUP" in sent[0], sent
+store.update("alerts", ia[0]["id"], {"outcome": "t1", "r_multiple": 1.0, "rule_return": 5.0, "hold_7d_return": 3.0})
+sbi = outcomes.scoreboard(store.select("alerts"))
+assert sbi["intraday"]["alerts_graded"] == 1 and outcomes.group_of(ia[0]) == "intraday"
+assert outcomes.scoreboard_row(sbi)["intraday_n_graded"] == 1
+# Daily takeover, same day: the row becomes a daily breakout and keeps "triggered".
+import scanner.scan as scan_mod
+real_detect = scan_mod.detect_breakout
+from scanner.strategy import Breakout
+dbo = Breakout("INTRA/USD", "crypto", pd.Timestamp("2026-09-11", tz="UTC").to_pydatetime(), 1.05, 0.99, 1.40, 1000.0, 30.0)
+scan_mod.detect_breakout = lambda daily, sym, cls: dbo
+scan._now = lambda: pd.Timestamp("2026-09-12 01:00", tz="UTC")
+price["px"] = None
+assert scan.stage_a(store) == 1
+ip = [r for r in store.select("in_play") if r["symbol"] == "INTRA/USD"]
+assert len(ip) == 1 and ip[0]["source"] is None and ip[0]["status"] == "triggered" and ip[0]["breakout_level"] == 1.05, ip
+# Daily takeover, later day: the earlier intraday row, still watching, is closed.
+store.update("in_play", ip[0]["id"], {"source": "intraday", "status": "watching"})
+dbo.breakout_date = pd.Timestamp("2026-09-12", tz="UTC").to_pydatetime()
+assert scan.stage_a(store) == 1
+ip = sorted((r for r in store.select("in_play") if r["symbol"] == "INTRA/USD"), key=lambda r: r["breakout_date"])
+assert [(r["source"], r["status"]) for r in ip] == [("intraday", "expired"), (None, "watching")], ip
+scan_mod.detect_breakout = real_detect
+# A Coinbase mover's intraday pullback stays shadow; a listing's doesn't.
+assert scan._is_shadow("coinbase", "intraday") is True and scan._is_shadow("coinbase", "listing") is False
+print("Intraday Stage A OK ->", [m for m in sent if "intraday" in m.lower()][:1] or sent[:1])
 print("ALL OK")

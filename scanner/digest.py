@@ -41,9 +41,10 @@ def build() -> str:
     lines += [f"• {f['symbol']} vol×{f['volume_multiple']} move {f['move_pct']:+.1f}% OI {f['oi_change_pct'] or '–'}% {'news' if f['has_news'] else 'NO NEWS'}" for f in fps[:8]] or ["• none"]
     lines += ["", "*In play (watching for pullback)*"]
     lines += [f"• {w['symbol']} listing on {w['breakout_date']}, pre-announcement {w['breakout_level']:.4g}" if w.get("source") == "listing"
+              else f"• {w['symbol']} intraday breakout over {w['breakout_level']:.4g} on {w['breakout_date']}" if w.get("source") == "intraday"
               else f"• {w['symbol']} broke {w['breakout_level']:.4g} on {w['breakout_date']}" for w in watching] or ["• none"]
     lines += ["", "*Scoreboard*"]
-    for label in ("overall", "pullback", "breakout", "listing", "trader"):
+    for label in ("overall", "pullback", "breakout", "listing", "intraday", "trader"):
         st = sb[label]
         if st["alerts_graded"]:
             vs = f"{st['vs_hold_7d']:+.1f}pp" if st["vs_hold_7d"] is not None else "–"

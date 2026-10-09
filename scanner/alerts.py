@@ -52,6 +52,14 @@ def format_breakout(bo, exchange: str | None = None) -> str:
     )
 
 
+def format_intraday(bo, exchange: str | None = None) -> str:
+    ib = CFG["intraday_breakout"]
+    src = f" ({exchange.capitalize()})" if exchange else ""
+    return (f"*IN PLAY (intraday) — {bo.symbol}*{src} 1h close over the {ib['lookback_high_hours'] // 24}-day high "
+            f"{bo.breakout_level:.4g} on volume, +{bo.impulse_pct:.0f}% in {ib['gain_window_hours']}h. "
+            f"No entry: watching for a 1h pullback.")
+
+
 def format_late(bo, reason: str, exchange: str | None = None) -> str:
     src = f" ({exchange.capitalize()})" if exchange else ""
     return (f"*LATE BREAKOUT — {bo.symbol}*{src} broke {bo.breakout_level:.4g} on {bo.breakout_date:%d %b}, "

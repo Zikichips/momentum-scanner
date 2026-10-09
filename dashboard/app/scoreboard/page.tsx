@@ -29,9 +29,9 @@ export default async function ScoreboardPage() {
       vsHold: rules != null && holds != null ? rules - holds : null,
     };
   };
-  // Listing alerts (pullbacks on coins the listing watcher put in play) are their own group.
-  const group = (a: Alert) => a.source === "listing" ? "listing" : a.entry_type ?? "pullback";
-  const byType = (["pullback", "breakout", "listing"] as const).map(t => stats(t, graded.filter(a => group(a) === t)));
+  // Pullbacks on coins put in play by the listing watcher or intraday Stage A are their own groups.
+  const group = (a: Alert) => a.source === "listing" || a.source === "intraday" ? a.source : a.entry_type ?? "pullback";
+  const byType = (["pullback", "breakout", "listing", "intraday"] as const).map(t => stats(t, graded.filter(a => group(a) === t)));
   // Tool = every alert the scanner fired (including ones skipped at max positions);
   // trader = only the alerts actually taken.
   const toolVsTrader = [stats("tool (every alert)", graded), stats("trader (taken only)", graded.filter(a => a.taken !== false))];

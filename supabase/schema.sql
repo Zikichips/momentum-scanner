@@ -16,7 +16,7 @@ create table if not exists in_play (
   status          text not null default 'watching' check (status in ('watching','triggered','expired','failed')),
   exchange        text,                        -- price source; null = configured exchange (Kraken)
   late            boolean not null default false,  -- first seen too late for a breakout entry; pullback only
-  source          text,                        -- null = Stage A breakout; 'listing' = exchange-listing watcher
+  source          text,                        -- null = Stage A breakout; 'listing' = exchange-listing watcher; 'intraday' = 1h Stage A
   created_at      timestamptz not null default now(),
   updated_at      timestamptz not null default now(),
   unique (symbol, breakout_date)
@@ -256,3 +256,8 @@ alter table alerts add column if not exists source text;
 alter table scoreboard_daily add column if not exists listing_n_graded int;
 alter table scoreboard_daily add column if not exists listing_win_rate double precision;
 alter table scoreboard_daily add column if not exists listing_avg_r double precision;
+
+-- Intraday Stage A (in_play.source = 'intraday'): its pullback alerts are scored as their own group.
+alter table scoreboard_daily add column if not exists intraday_n_graded int;
+alter table scoreboard_daily add column if not exists intraday_win_rate double precision;
+alter table scoreboard_daily add column if not exists intraday_avg_r double precision;
